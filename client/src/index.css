@@ -53,7 +53,7 @@
   --chart-4: var(--color-blue-700);
   --chart-5: var(--color-blue-800);
   --radius: 0.65rem;
-  --background: oklch(1 0 0);
+  --background: oklch(0.09 0.015 250);
   --foreground: oklch(0.235 0.015 65);
   --card: oklch(1 0 0);
   --card-foreground: oklch(0.235 0.015 65);
