@@ -14,9 +14,13 @@ import {
 } from "@/game/state";
 import { Renderer } from "@/game/renderer";
 import { getAIMove } from "@/game/ai";
+import { Language, t } from "@/i18n/translations";
+import { createRoom, joinRoom, getRoom, getRoomShareLink, getRoomCodeFromUrl } from "@/game/online";
 
 type GameMode = "pvp" | "pvc" | "online";
 type AIDifficulty = "easy" | "medium" | "hard";
+type OnlineMode = "menu" | "create" | "join" | "waiting" | "playing";
+
 
 export default function GameCanvas() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -33,6 +37,10 @@ export default function GameCanvas() {
   const [showDifficultySelect, setShowDifficultySelect] = useState(false);
   const [winMessage, setWinMessage] = useState<string | null>(null);
   const [isAIThinking, setIsAIThinking] = useState(false);
+  const [language, setLanguage] = useState<Language>("en");
+  const [onlineMode, setOnlineMode] = useState<OnlineMode>("menu");
+  const [roomCode, setRoomCode] = useState<string>("");
+  const [roomCodeInput, setRoomCodeInput] = useState<string>("");
 
   const syncState = useCallback((newState: GameState) => {
     stateRef.current = newState;
@@ -144,14 +152,53 @@ export default function GameCanvas() {
     if (mode === "pvc") {
       setShowDifficultySelect(true);
     } else if (mode === "online") {
-      setWinMessage("ONLINE MODE COMING SOON");
+      setGameMode(mode);
+      setShowMenu(false);
+      setOnlineMode("menu");
+      const urlRoomCode = getRoomCodeFromUrl();
+      if (urlRoomCode) {
+        if (joinRoom(urlRoomCode)) {
+          setRoomCode(urlRoomCode);
+          setOnlineMode("playing");
+        } else {
+          setWinMessage(t("online.roomNotFound", language));
+        }
+      }
     } else {
       setGameMode(mode);
       setShowMenu(false);
       setWinMessage(null);
       syncState(createInitialState({ gameMode: mode, aiDifficulty }));
     }
-  }, [syncState, aiDifficulty]);
+  }, [syncState, aiDifficulty, language]);
+
+  const handleCreateRoom = useCallback(() => {
+    const code = createRoom();
+    setRoomCode(code);
+    setOnlineMode("waiting");
+  }, []);
+
+  const handleJoinRoom = useCallback(() => {
+    const code = roomCodeInput.toUpperCase();
+    if (code.length !== 6) {
+      setWinMessage(t("online.invalidCode", language));
+      return;
+    }
+    if (joinRoom(code)) {
+      setRoomCode(code);
+      setOnlineMode("playing");
+    } else {
+      setWinMessage(t("online.roomNotFound", language));
+    }
+  }, [roomCodeInput, language]);
+
+  const handleCopyLink = useCallback(() => {
+    const link = getRoomShareLink(roomCode);
+    navigator.clipboard.writeText(link).then(() => {
+      setWinMessage(t("online.copyLink", language));
+      setTimeout(() => setWinMessage(null), 2000);
+    });
+  }, [roomCode, language]);
 
   const handleSelectDifficulty = useCallback((difficulty: AIDifficulty) => {
     setAIDifficulty(difficulty);
@@ -682,6 +729,340 @@ export default function GameCanvas() {
           </div>
         </div>
       )}
+
+      
+      {/* ── ONLINE MODE ── */}
+      {showMenu && gameMode === "online" && onlineMode === "menu" && (
+        <div
+          className="absolute inset-0 flex items-center justify-center pointer-events-auto"
+          style={{ background: "rgba(15,23,42,0.6)", backdropFilter: "blur(2px)" }}
+        >
+          <div
+            style={{
+              fontFamily: "'Space Mono', 'Courier New', monospace",
+              background: "rgba(15,23,42,0.97)",
+              border: "1px solid rgba(248,113,113,0.2)",
+              boxShadow: "0 0 80px rgba(0,0,0,0.7)",
+              padding: "40px 40px 36px",
+              borderRadius: 8,
+              maxWidth: 400,
+              width: "calc(100% - 32px)",
+            }}
+          >
+            <div style={{ textAlign: "center", marginBottom: 32 }}>
+              <div style={{ color: "#f87171", fontSize: 16, fontWeight: 700, letterSpacing: "0.25em", textShadow: "0 0 12px rgba(248,113,113,0.5)", marginBottom: 12 }}>
+                ONLINE BATTLE
+              </div>
+            </div>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              <button
+                onClick={handleCreateRoom}
+                style={{
+                  fontFamily: "'Space Mono', monospace",
+                  background: "rgba(248,113,113,0.08)",
+                  border: "1px solid rgba(248,113,113,0.3)",
+                  color: "#ffffff",
+                  fontSize: 13,
+                  fontWeight: 700,
+                  letterSpacing: "0.12em",
+                  padding: "14px 20px",
+                  borderRadius: 4,
+                  cursor: "pointer",
+                  transition: "all 0.2s ease",
+                }}
+                onMouseEnter={e => {
+                  const el = e.currentTarget;
+                  el.style.background = "rgba(248,113,113,0.12)";
+                  el.style.borderColor = "rgba(248,113,113,0.5)";
+                }}
+                onMouseLeave={e => {
+                  const el = e.currentTarget;
+                  el.style.background = "rgba(248,113,113,0.08)";
+                  el.style.borderColor = "rgba(248,113,113,0.3)";
+                }}
+              >
+                CREATE ROOM
+              </button>
+              <button
+                onClick={() => setOnlineMode("join")}
+                style={{
+                  fontFamily: "'Space Mono', monospace",
+                  background: "rgba(56,189,248,0.08)",
+                  border: "1px solid rgba(56,189,248,0.3)",
+                  color: "#ffffff",
+                  fontSize: 13,
+                  fontWeight: 700,
+                  letterSpacing: "0.12em",
+                  padding: "14px 20px",
+                  borderRadius: 4,
+                  cursor: "pointer",
+                  transition: "all 0.2s ease",
+                }}
+                onMouseEnter={e => {
+                  const el = e.currentTarget;
+                  el.style.background = "rgba(56,189,248,0.12)";
+                  el.style.borderColor = "rgba(56,189,248,0.5)";
+                }}
+                onMouseLeave={e => {
+                  const el = e.currentTarget;
+                  el.style.background = "rgba(56,189,248,0.08)";
+                  el.style.borderColor = "rgba(56,189,248,0.3)";
+                }}
+              >
+                JOIN ROOM
+              </button>
+              <button
+                onClick={handleBackToMenu}
+                style={{
+                  fontFamily: "'Space Mono', monospace",
+                  background: "rgba(255,255,255,0.03)",
+                  border: "1px solid rgba(255,255,255,0.15)",
+                  color: "#ffffff",
+                  fontSize: 13,
+                  fontWeight: 700,
+                  letterSpacing: "0.12em",
+                  padding: "14px 20px",
+                  borderRadius: 4,
+                  cursor: "pointer",
+                  transition: "all 0.2s ease",
+                }}
+                onMouseEnter={e => {
+                  const el = e.currentTarget;
+                  el.style.background = "rgba(255,255,255,0.06)";
+                  el.style.borderColor = "rgba(255,255,255,0.3)";
+                }}
+                onMouseLeave={e => {
+                  const el = e.currentTarget;
+                  el.style.background = "rgba(255,255,255,0.03)";
+                  el.style.borderColor = "rgba(255,255,255,0.15)";
+                }}
+              >
+                BACK
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── JOIN ROOM ── */}
+      {showMenu && gameMode === "online" && onlineMode === "join" && (
+        <div
+          className="absolute inset-0 flex items-center justify-center pointer-events-auto"
+          style={{ background: "rgba(15,23,42,0.6)", backdropFilter: "blur(2px)" }}
+        >
+          <div
+            style={{
+              fontFamily: "'Space Mono', 'Courier New', monospace",
+              background: "rgba(15,23,42,0.97)",
+              border: "1px solid rgba(56,189,248,0.2)",
+              boxShadow: "0 0 80px rgba(0,0,0,0.7)",
+              padding: "40px 40px 36px",
+              borderRadius: 8,
+              maxWidth: 400,
+              width: "calc(100% - 32px)",
+            }}
+          >
+            <div style={{ textAlign: "center", marginBottom: 24 }}>
+              <div style={{ color: "#38bdf8", fontSize: 16, fontWeight: 700, letterSpacing: "0.25em", textShadow: "0 0 12px rgba(56,189,248,0.5)", marginBottom: 12 }}>
+                JOIN ROOM
+              </div>
+              <div style={{ color: "rgba(255,255,255,0.4)", fontSize: 11, letterSpacing: "0.1em" }}>
+                Enter a 6-digit room code
+              </div>
+            </div>
+
+            <input
+              type="text"
+              maxLength={6}
+              value={roomCodeInput}
+              onChange={e => setRoomCodeInput(e.target.value.toUpperCase())}
+              placeholder="000000"
+              style={{
+                fontFamily: "'Space Mono', monospace",
+                background: "rgba(255,255,255,0.05)",
+                border: "1px solid rgba(56,189,248,0.3)",
+                color: "#38bdf8",
+                fontSize: 24,
+                fontWeight: 700,
+                letterSpacing: "0.2em",
+                padding: "12px 16px",
+                borderRadius: 4,
+                textAlign: "center",
+                marginBottom: 20,
+                width: "100%",
+                boxSizing: "border-box",
+              }}
+            />
+
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              <button
+                onClick={handleJoinRoom}
+                style={{
+                  fontFamily: "'Space Mono', monospace",
+                  background: "rgba(56,189,248,0.12)",
+                  border: "1px solid rgba(56,189,248,0.4)",
+                  color: "#38bdf8",
+                  fontSize: 13,
+                  fontWeight: 700,
+                  letterSpacing: "0.12em",
+                  padding: "14px 20px",
+                  borderRadius: 4,
+                  cursor: "pointer",
+                  transition: "all 0.2s ease",
+                }}
+                onMouseEnter={e => {
+                  const el = e.currentTarget;
+                  el.style.background = "rgba(56,189,248,0.16)";
+                }}
+                onMouseLeave={e => {
+                  const el = e.currentTarget;
+                  el.style.background = "rgba(56,189,248,0.12)";
+                }}
+              >
+                JOIN
+              </button>
+              <button
+                onClick={() => setOnlineMode("menu")}
+                style={{
+                  fontFamily: "'Space Mono', monospace",
+                  background: "rgba(255,255,255,0.03)",
+                  border: "1px solid rgba(255,255,255,0.15)",
+                  color: "#ffffff",
+                  fontSize: 13,
+                  fontWeight: 700,
+                  letterSpacing: "0.12em",
+                  padding: "14px 20px",
+                  borderRadius: 4,
+                  cursor: "pointer",
+                  transition: "all 0.2s ease",
+                }}
+                onMouseEnter={e => {
+                  const el = e.currentTarget;
+                  el.style.background = "rgba(255,255,255,0.06)";
+                }}
+                onMouseLeave={e => {
+                  const el = e.currentTarget;
+                  el.style.background = "rgba(255,255,255,0.03)";
+                }}
+              >
+                BACK
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── WAITING FOR OPPONENT ── */}
+      {showMenu && gameMode === "online" && onlineMode === "waiting" && (
+        <div
+          className="absolute inset-0 flex items-center justify-center pointer-events-auto"
+          style={{ background: "rgba(15,23,42,0.6)", backdropFilter: "blur(2px)" }}
+        >
+          <div
+            style={{
+              fontFamily: "'Space Mono', 'Courier New', monospace",
+              background: "rgba(15,23,42,0.97)",
+              border: "1px solid rgba(248,113,113,0.2)",
+              boxShadow: "0 0 80px rgba(0,0,0,0.7)",
+              padding: "40px 40px 36px",
+              borderRadius: 8,
+              maxWidth: 400,
+              width: "calc(100% - 32px)",
+              textAlign: "center",
+            }}
+          >
+            <div style={{ color: "#f87171", fontSize: 16, fontWeight: 700, letterSpacing: "0.25em", textShadow: "0 0 12px rgba(248,113,113,0.5)", marginBottom: 24 }}>
+              ROOM CREATED
+            </div>
+            <div style={{ color: "rgba(255,255,255,0.5)", fontSize: 32, fontWeight: 700, letterSpacing: "0.3em", fontFamily: "'Space Mono', monospace", marginBottom: 24 }}>
+              {roomCode}
+            </div>
+            <div style={{ color: "rgba(255,255,255,0.4)", fontSize: 11, letterSpacing: "0.1em", marginBottom: 24 }}>
+              Share this code with your opponent
+            </div>
+            <button
+              onClick={handleCopyLink}
+              style={{
+                fontFamily: "'Space Mono', monospace",
+                background: "rgba(248,113,113,0.12)",
+                border: "1px solid rgba(248,113,113,0.4)",
+                color: "#f87171",
+                fontSize: 13,
+                fontWeight: 700,
+                letterSpacing: "0.12em",
+                padding: "14px 20px",
+                borderRadius: 4,
+                cursor: "pointer",
+                width: "100%",
+                marginBottom: 10,
+                transition: "all 0.2s ease",
+              }}
+              onMouseEnter={e => {
+                const el = e.currentTarget;
+                el.style.background = "rgba(248,113,113,0.16)";
+              }}
+              onMouseLeave={e => {
+                const el = e.currentTarget;
+                el.style.background = "rgba(248,113,113,0.12)";
+              }}
+            >
+              COPY LINK
+            </button>
+            <div style={{ color: "rgba(255,255,255,0.3)", fontSize: 10, letterSpacing: "0.1em", marginTop: 16 }}>
+              Waiting for opponent...
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── LANGUAGE SELECTOR ── */}
+      <div
+        style={{
+          position: "absolute",
+          top: 16,
+          right: 16,
+          display: "flex",
+          gap: 8,
+          zIndex: 1000,
+        }}
+      >
+        {(["en", "zh", "fr"] as Language[]).map(lang => (
+          <button
+            key={lang}
+            onClick={() => setLanguage(lang)}
+            style={{
+              fontFamily: "'Space Mono', monospace",
+              background: language === lang ? "rgba(56,189,248,0.2)" : "rgba(255,255,255,0.05)",
+              border: `1px solid ${language === lang ? "rgba(56,189,248,0.5)" : "rgba(255,255,255,0.1)"}`,
+              color: language === lang ? "#38bdf8" : "rgba(255,255,255,0.5)",
+              fontSize: 11,
+              fontWeight: 700,
+              letterSpacing: "0.1em",
+              padding: "8px 12px",
+              borderRadius: 4,
+              cursor: "pointer",
+              transition: "all 0.2s ease",
+            }}
+            onMouseEnter={e => {
+              const el = e.currentTarget;
+              if (language !== lang) {
+                el.style.background = "rgba(255,255,255,0.08)";
+                el.style.borderColor = "rgba(255,255,255,0.2)";
+              }
+            }}
+            onMouseLeave={e => {
+              const el = e.currentTarget;
+              if (language !== lang) {
+                el.style.background = "rgba(255,255,255,0.05)";
+                el.style.borderColor = "rgba(255,255,255,0.1)";
+              }
+            }}
+          >
+            {lang.toUpperCase()}
+          </button>
+        ))}
+      </div>
 
       <style>{`
         @keyframes blink {
