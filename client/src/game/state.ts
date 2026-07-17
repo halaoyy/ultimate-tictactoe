@@ -27,9 +27,11 @@ export interface GameState {
   scores: { X: number; O: number };
   moveHistory: BoardCoord[];
   lastMove: BoardCoord | null;
+  aiDifficulty?: "easy" | "medium" | "hard";
+  gameMode?: "pvp" | "pvc" | "online";
 }
 
-export function createInitialState(): GameState {
+export function createInitialState(options?: { aiDifficulty?: "easy" | "medium" | "hard"; gameMode?: "pvp" | "pvc" | "online" }): GameState {
   return {
     board: Array(3)
       .fill(null)
@@ -55,6 +57,8 @@ export function createInitialState(): GameState {
     scores: { X: 0, O: 0 },
     moveHistory: [],
     lastMove: null,
+    aiDifficulty: options?.aiDifficulty || "medium",
+    gameMode: options?.gameMode || "pvp",
   };
 }
 

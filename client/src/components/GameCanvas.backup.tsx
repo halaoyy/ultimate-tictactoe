@@ -15,8 +15,7 @@ import {
 import { Renderer } from "@/game/renderer";
 import { getAIMove } from "@/game/ai";
 
-type GameMode = "pvp" | "pvc" | "online";
-type AIDifficulty = "easy" | "medium" | "hard";
+type GameMode = "pvp" | "pvc";
 
 export default function GameCanvas() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -28,9 +27,7 @@ export default function GameCanvas() {
 
   const [gameState, setGameState] = useState<GameState>(createInitialState());
   const [gameMode, setGameMode] = useState<GameMode>("pvp");
-  const [aiDifficulty, setAIDifficulty] = useState<AIDifficulty>("medium");
   const [showMenu, setShowMenu] = useState(true);
-  const [showDifficultySelect, setShowDifficultySelect] = useState(false);
   const [winMessage, setWinMessage] = useState<string | null>(null);
   const [isAIThinking, setIsAIThinking] = useState(false);
 
@@ -69,7 +66,7 @@ export default function GameCanvas() {
   }, []);
 
   const handleCanvasClick = useCallback(
-    (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
+    (e: React.MouseEvent<HTMLCanvasElement>) => {
       const renderer = rendererRef.current;
       if (!renderer) return;
       const state = stateRef.current;
@@ -77,17 +74,7 @@ export default function GameCanvas() {
       if (gameMode === "pvc" && state.currentPlayer === "O") return;
       if (isAIThinking) return;
 
-      let clientX: number, clientY: number;
-      if ("clientX" in e) {
-        clientX = e.clientX;
-        clientY = e.clientY;
-      } else {
-        const touch = e.touches[0];
-        clientX = touch.clientX;
-        clientY = touch.clientY;
-      }
-
-      const coord = renderer.hitTest(state, clientX, clientY);
+      const coord = renderer.hitTest(state, e.clientX, e.clientY);
       if (!coord) return;
       if (!isValidMove(state, coord)) return;
 
@@ -115,7 +102,7 @@ export default function GameCanvas() {
 
     setIsAIThinking(true);
     aiTimeoutRef.current = setTimeout(() => {
-      const move = getAIMove(stateRef.current, aiDifficulty);
+      const move = getAIMove(stateRef.current, gameState.aiDifficulty || "medium");
       if (move) {
         const renderer = rendererRef.current;
         renderer?.animatePiece(move.outerRow, move.outerCol, move.innerRow, move.innerCol, "O");
@@ -141,32 +128,16 @@ export default function GameCanvas() {
   }, [syncState]);
 
   const handleStartGame = useCallback((mode: GameMode) => {
-    if (mode === "pvc") {
-      setShowDifficultySelect(true);
-    } else if (mode === "online") {
-      setWinMessage("ONLINE MODE COMING SOON");
-    } else {
-      setGameMode(mode);
-      setShowMenu(false);
-      setWinMessage(null);
-      syncState(createInitialState({ gameMode: mode, aiDifficulty }));
-    }
-  }, [syncState, aiDifficulty]);
-
-  const handleSelectDifficulty = useCallback((difficulty: AIDifficulty) => {
-    setAIDifficulty(difficulty);
-    setGameMode("pvc");
-    setShowDifficultySelect(false);
+    setGameMode(mode);
     setShowMenu(false);
     setWinMessage(null);
-    syncState(createInitialState({ gameMode: "pvc", aiDifficulty: difficulty }));
+    syncState(createInitialState());
   }, [syncState]);
 
   const handleBackToMenu = useCallback(() => {
     if (aiTimeoutRef.current) clearTimeout(aiTimeoutRef.current);
     setIsAIThinking(false);
     setWinMessage(null);
-    setShowDifficultySelect(false);
     setShowMenu(true);
     syncState(createInitialState());
   }, [syncState]);
@@ -181,7 +152,6 @@ export default function GameCanvas() {
         className="absolute inset-0 w-full h-full"
         style={{ touchAction: "none", cursor: showMenu ? "default" : "crosshair" }}
         onClick={showMenu ? undefined : handleCanvasClick}
-        onTouchStart={showMenu ? undefined : handleCanvasClick}
       />
 
       {/* ── IN-GAME HUD ── */}
@@ -337,7 +307,7 @@ export default function GameCanvas() {
         <div
           className="absolute inset-0 flex items-center justify-center pointer-events-auto"
           style={{ background: "rgba(15,23,42,0.75)", backdropFilter: "blur(6px)" }}
-          onClick={winMessage === "ONLINE MODE COMING SOON" ? handleBackToMenu : handleNewGame}
+          onClick={handleNewGame}
         >
           <div
             style={{
@@ -352,34 +322,27 @@ export default function GameCanvas() {
             }}
           >
             <div style={{ color: "rgba(255,255,255,0.3)", fontSize: 10, letterSpacing: "0.3em", marginBottom: 12 }}>
-              {winMessage === "ONLINE MODE COMING SOON" ? "FEATURE" : "GAME OVER"}
+              GAME OVER
             </div>
             <div style={{
-              color: winMessage === "DRAW" ? "#94a3b8" : winMessage === "ONLINE MODE COMING SOON" ? "#38bdf8" : "#fbbf24",
+              color: winMessage === "DRAW" ? "#94a3b8" : "#fbbf24",
               fontSize: 36,
               fontWeight: 700,
               letterSpacing: "0.05em",
-              textShadow: winMessage === "DRAW" ? "none" : winMessage === "ONLINE MODE COMING SOON" ? "0 0 24px rgba(56,189,248,0.6)" : "0 0 24px rgba(251,191,36,0.6)",
+              textShadow: winMessage === "DRAW" ? "none" : "0 0 24px rgba(251,191,36,0.6)",
               marginBottom: 16,
             }}>
               {winMessage}
             </div>
-            {winMessage !== "ONLINE MODE COMING SOON" && (
-              <div style={{ color: "rgba(255,255,255,0.3)", fontSize: 11, letterSpacing: "0.1em", marginBottom: 28 }}>
-                <span style={{ color: "#38bdf8" }}>X</span>
-                <span style={{ color: "rgba(255,255,255,0.2)", margin: "0 8px" }}>—</span>
-                <span style={{ color: "#38bdf8", fontWeight: 700 }}>{gameState.scores.X}</span>
-                <span style={{ color: "rgba(255,255,255,0.2)", margin: "0 16px" }}>·</span>
-                <span style={{ color: "#f87171" }}>O</span>
-                <span style={{ color: "rgba(255,255,255,0.2)", margin: "0 8px" }}>—</span>
-                <span style={{ color: "#f87171", fontWeight: 700 }}>{gameState.scores.O}</span>
-              </div>
-            )}
-            {winMessage === "ONLINE MODE COMING SOON" && (
-              <div style={{ color: "rgba(255,255,255,0.4)", fontSize: 12, lineHeight: 1.6, marginBottom: 28 }}>
-                联机对战功能即将推出。敬请期待！
-              </div>
-            )}
+            <div style={{ color: "rgba(255,255,255,0.3)", fontSize: 11, letterSpacing: "0.1em", marginBottom: 28 }}>
+              <span style={{ color: "#38bdf8" }}>X</span>
+              <span style={{ color: "rgba(255,255,255,0.2)", margin: "0 8px" }}>—</span>
+              <span style={{ color: "#38bdf8", fontWeight: 700 }}>{gameState.scores.X}</span>
+              <span style={{ color: "rgba(255,255,255,0.2)", margin: "0 16px" }}>·</span>
+              <span style={{ color: "#f87171" }}>O</span>
+              <span style={{ color: "rgba(255,255,255,0.2)", margin: "0 8px" }}>—</span>
+              <span style={{ color: "#f87171", fontWeight: 700 }}>{gameState.scores.O}</span>
+            </div>
             <button
               style={{
                 fontFamily: "'Space Mono', monospace",
@@ -404,104 +367,8 @@ export default function GameCanvas() {
         </div>
       )}
 
-      {/* ── DIFFICULTY SELECT ── */}
-      {showDifficultySelect && (
-        <div
-          className="absolute inset-0 flex items-center justify-center pointer-events-auto"
-          style={{ background: "rgba(15,23,42,0.6)", backdropFilter: "blur(2px)" }}
-        >
-          <div
-            style={{
-              fontFamily: "'Space Mono', 'Courier New', monospace",
-              background: "rgba(15,23,42,0.97)",
-              border: "1px solid rgba(255,255,255,0.1)",
-              boxShadow: "0 0 80px rgba(0,0,0,0.7), inset 0 1px 0 rgba(255,255,255,0.05)",
-              padding: "40px 40px 36px",
-              borderRadius: 8,
-              maxWidth: 400,
-              width: "calc(100% - 32px)",
-            }}
-          >
-            <div style={{ textAlign: "center", marginBottom: 32 }}>
-              <div style={{ color: "#fbbf24", fontSize: 16, fontWeight: 700, letterSpacing: "0.25em", textShadow: "0 0 12px rgba(251,191,36,0.5)", marginBottom: 12 }}>
-                SELECT DIFFICULTY
-              </div>
-              <div style={{ color: "rgba(255,255,255,0.4)", fontSize: 11, letterSpacing: "0.1em" }}>
-                Choose your AI opponent strength
-              </div>
-            </div>
-
-            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-              {(["easy", "medium", "hard"] as AIDifficulty[]).map((diff) => (
-                <button
-                  key={diff}
-                  onClick={() => handleSelectDifficulty(diff)}
-                  style={{
-                    fontFamily: "'Space Mono', monospace",
-                    background: "rgba(255,255,255,0.03)",
-                    border: "1px solid rgba(255,255,255,0.15)",
-                    color: "#ffffff",
-                    fontSize: 13,
-                    fontWeight: 700,
-                    letterSpacing: "0.12em",
-                    padding: "14px 20px",
-                    borderRadius: 4,
-                    cursor: "pointer",
-                    textTransform: "uppercase",
-                    transition: "all 0.2s ease",
-                  }}
-                  onMouseEnter={(e) => {
-                    const el = e.currentTarget;
-                    el.style.background = "rgba(255,255,255,0.06)";
-                    el.style.borderColor = "rgba(255,255,255,0.3)";
-                  }}
-                  onMouseLeave={(e) => {
-                    const el = e.currentTarget;
-                    el.style.background = "rgba(255,255,255,0.03)";
-                    el.style.borderColor = "rgba(255,255,255,0.15)";
-                  }}
-                >
-                  {diff === "easy" && "🟢 Easy"}
-                  {diff === "medium" && "🟡 Medium"}
-                  {diff === "hard" && "🔴 Hard"}
-                </button>
-              ))}
-            </div>
-
-            <button
-              onClick={() => setShowDifficultySelect(false)}
-              style={{
-                fontFamily: "'Space Mono', monospace",
-                width: "100%",
-                marginTop: 16,
-                background: "transparent",
-                border: "1px solid rgba(255,255,255,0.1)",
-                color: "rgba(255,255,255,0.3)",
-                fontSize: 11,
-                fontWeight: 700,
-                letterSpacing: "0.15em",
-                padding: "10px 20px",
-                borderRadius: 4,
-                cursor: "pointer",
-                transition: "all 0.2s ease",
-              }}
-              onMouseEnter={(e) => {
-                const el = e.currentTarget;
-                el.style.color = "rgba(255,255,255,0.6)";
-              }}
-              onMouseLeave={(e) => {
-                const el = e.currentTarget;
-                el.style.color = "rgba(255,255,255,0.3)";
-              }}
-            >
-              BACK
-            </button>
-          </div>
-        </div>
-      )}
-
       {/* ── MAIN MENU ── */}
-      {showMenu && !showDifficultySelect && (
+      {showMenu && (
         <div
           className="absolute inset-0 flex items-center justify-center pointer-events-auto"
           style={{ background: "rgba(15,23,42,0.6)", backdropFilter: "blur(2px)" }}
@@ -633,44 +500,6 @@ export default function GameCanvas() {
                   <span style={{ fontSize: 16 }}>🤖</span>
                 </span>
                 <span>VS AI</span>
-                <span style={{ color: "rgba(255,255,255,0.2)", fontSize: 14 }}>›</span>
-              </button>
-
-              <button
-                onClick={() => handleStartGame("online")}
-                style={{
-                  fontFamily: "'Space Mono', monospace",
-                  background: "rgba(248,113,113,0.04)",
-                  border: "1px solid rgba(248,113,113,0.2)",
-                  color: "#ffffff",
-                  fontSize: 13,
-                  fontWeight: 700,
-                  letterSpacing: "0.12em",
-                  padding: "14px 20px",
-                  borderRadius: 4,
-                  cursor: "pointer",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  transition: "all 0.2s ease",
-                }}
-                onMouseEnter={e => {
-                  const el = e.currentTarget;
-                  el.style.background = "rgba(248,113,113,0.08)";
-                  el.style.borderColor = "rgba(248,113,113,0.4)";
-                }}
-                onMouseLeave={e => {
-                  const el = e.currentTarget;
-                  el.style.background = "rgba(248,113,113,0.04)";
-                  el.style.borderColor = "rgba(248,113,113,0.2)";
-                }}
-              >
-                <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                  <span style={{ color: "#38bdf8", textShadow: "0 0 8px #38bdf8" }}>✕</span>
-                  <span style={{ color: "rgba(255,255,255,0.3)", fontSize: 10 }}>VS</span>
-                  <span style={{ color: "#f87171", textShadow: "0 0 8px #f87171" }}>○</span>
-                </span>
-                <span>ONLINE</span>
                 <span style={{ color: "rgba(255,255,255,0.2)", fontSize: 14 }}>›</span>
               </button>
             </div>
