@@ -15,7 +15,7 @@ import {
 import { Renderer } from "@/game/renderer";
 import { getAIMove } from "@/game/ai";
 import { Language, t } from "@/i18n/translations";
-import { createRoom, joinRoom, getRoom, getRoomShareLink, getRoomCodeFromUrl } from "@/game/online";
+import { createRoom, joinRoom, getRoom, getRoomShareLink, getRoomCodeFromUrl, updateRoomGameState } from "@/game/online";
 
 type GameMode = "pvp" | "pvc" | "online";
 type AIDifficulty = "easy" | "medium" | "hard";
@@ -41,6 +41,21 @@ export default function GameCanvas() {
   const [onlineMode, setOnlineMode] = useState<OnlineMode>("menu");
   const [roomCode, setRoomCode] = useState<string>("");
   const [roomCodeInput, setRoomCodeInput] = useState<string>("");
+  const [playerPiece, setPlayerPiece] = useState<Player>("X");
+
+  // Serialize game state for online sync (only the fields that change)
+  const serializeGameState = (state: GameState) => JSON.stringify({
+    board: state.board,
+    subBoardWinners: state.subBoardWinners,
+    subBoardDrawn: state.subBoardDrawn,
+    currentPlayer: state.currentPlayer,
+    nextBoard: state.nextBoard,
+    gameWinner: state.gameWinner,
+    isDraw: state.isDraw,
+    moveHistory: state.moveHistory,
+    lastMove: state.lastMove,
+    scores: state.scores,
+  });
 
   const syncState = useCallback((newState: GameState) => {
     stateRef.current = newState;
@@ -83,6 +98,7 @@ export default function GameCanvas() {
       const state = stateRef.current;
       if (state.gameWinner || state.isDraw) return;
       if (gameMode === "pvc" && state.currentPlayer === "O") return;
+      if (gameMode === "online" && state.currentPlayer !== playerPiece) return;
       if (isAIThinking) return;
 
       let clientX: number, clientY: number;
@@ -103,17 +119,22 @@ export default function GameCanvas() {
       const newState = makeMove(state, coord);
       syncState(newState);
 
+      // Save state to room for online play
+      if (gameMode === "online" && roomCode) {
+        updateRoomGameState(roomCode, serializeGameState(newState));
+      }
+
       if (newState.gameWinner) {
         setWinMessage(
           newState.gameWinner === "X"
-            ? gameMode === "pvc" ? "YOU WIN" : "PLAYER X WINS"
-            : gameMode === "pvc" ? "AI WINS" : "PLAYER O WINS"
+            ? gameMode === "pvc" ? t("game.youWin", language) : t("game.playerXWins", language)
+            : gameMode === "pvc" ? t("game.aiWins", language) : t("game.playerOWins", language)
         );
       } else if (newState.isDraw) {
-        setWinMessage("DRAW");
+        setWinMessage(t("game.draw", language));
       }
     },
-    [gameMode, isAIThinking, syncState]
+    [gameMode, isAIThinking, syncState, language, roomCode, playerPiece, serializeGameState]
   );
 
   useEffect(() => {
@@ -130,16 +151,16 @@ export default function GameCanvas() {
         const newState = makeMove(stateRef.current, move);
         syncState(newState);
         if (newState.gameWinner) {
-          setWinMessage(newState.gameWinner === "O" ? "AI WINS" : "YOU WIN");
+          setWinMessage(newState.gameWinner === "O" ? t("game.aiWins", language) : t("game.youWin", language));
         } else if (newState.isDraw) {
-          setWinMessage("DRAW");
+          setWinMessage(t("game.draw", language));
         }
       }
       setIsAIThinking(false);
     }, 700);
 
     return () => { if (aiTimeoutRef.current) clearTimeout(aiTimeoutRef.current); };
-  }, [gameState.currentPlayer, gameState.gameWinner, gameState.isDraw, gameMode, syncState]);
+  }, [gameState.currentPlayer, gameState.gameWinner, gameState.isDraw, gameMode, aiDifficulty, language, syncState]);
 
   const handleNewGame = useCallback(() => {
     if (aiTimeoutRef.current) clearTimeout(aiTimeoutRef.current);
@@ -148,33 +169,46 @@ export default function GameCanvas() {
     syncState(resetGame(stateRef.current));
   }, [syncState]);
 
+  // Transition from online menus into actual gameplay
+  const startOnlineGame = useCallback(() => {
+    setOnlineMode("playing");
+    setShowMenu(false);
+    setWinMessage(null);
+    syncState(createInitialState({ gameMode: "online" }));
+  }, [syncState]);
+
   const handleStartGame = useCallback((mode: GameMode) => {
     if (mode === "pvc") {
       setShowDifficultySelect(true);
-    } else if (mode === "online") {
-      setGameMode(mode);
-      setShowMenu(false);
+      return;
+    }
+    if (mode === "online") {
+      setGameMode("online");
+      // Keep showMenu=true so online sub-menus are visible
       setOnlineMode("menu");
       const urlRoomCode = getRoomCodeFromUrl();
       if (urlRoomCode) {
         if (joinRoom(urlRoomCode)) {
           setRoomCode(urlRoomCode);
-          setOnlineMode("playing");
+          setPlayerPiece("O");
+          startOnlineGame();
         } else {
           setWinMessage(t("online.roomNotFound", language));
         }
       }
-    } else {
-      setGameMode(mode);
-      setShowMenu(false);
-      setWinMessage(null);
-      syncState(createInitialState({ gameMode: mode, aiDifficulty }));
+      return;
     }
-  }, [syncState, aiDifficulty, language]);
+    // pvp mode - start game immediately
+    setGameMode(mode);
+    setShowMenu(false);
+    setWinMessage(null);
+    syncState(createInitialState({ gameMode: mode, aiDifficulty }));
+  }, [syncState, aiDifficulty, language, startOnlineGame]);
 
   const handleCreateRoom = useCallback(() => {
     const code = createRoom();
     setRoomCode(code);
+    setPlayerPiece("X");
     setOnlineMode("waiting");
   }, []);
 
@@ -186,11 +220,12 @@ export default function GameCanvas() {
     }
     if (joinRoom(code)) {
       setRoomCode(code);
-      setOnlineMode("playing");
+      setPlayerPiece("O");
+      startOnlineGame();
     } else {
       setWinMessage(t("online.roomNotFound", language));
     }
-  }, [roomCodeInput, language]);
+  }, [roomCodeInput, language, startOnlineGame]);
 
   const handleCopyLink = useCallback(() => {
     const link = getRoomShareLink(roomCode);
@@ -215,8 +250,105 @@ export default function GameCanvas() {
     setWinMessage(null);
     setShowDifficultySelect(false);
     setShowMenu(true);
+    setGameMode("pvp");
+    setOnlineMode("menu");
+    setRoomCode("");
+    setRoomCodeInput("");
     syncState(createInitialState());
   }, [syncState]);
+
+  // Polling / storage listener: detect when opponent joins the room
+  useEffect(() => {
+    if (gameMode !== "online" || onlineMode !== "waiting" || !roomCode) return;
+
+    const ROOM_KEY = `utt_room_${roomCode}`;
+
+    // Check if opponent has already joined (e.g. page refresh)
+    const checkRoom = () => {
+      const data = localStorage.getItem(ROOM_KEY);
+      if (!data) return;
+      try {
+        const room = JSON.parse(data);
+        if (room.playerO) {
+          startOnlineGame();
+        }
+      } catch { /* ignore */ }
+    };
+
+    // Listen for changes from other tabs
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === ROOM_KEY && e.newValue) {
+        try {
+          const room = JSON.parse(e.newValue);
+          if (room.playerO) {
+            startOnlineGame();
+          }
+        } catch { /* ignore */ }
+      }
+    };
+
+    window.addEventListener("storage", onStorage);
+
+    // Poll every 2s as fallback (same-tab or cross-device stub)
+    const poll = setInterval(checkRoom, 2000);
+
+    return () => {
+      window.removeEventListener("storage", onStorage);
+      clearInterval(poll);
+    };
+  }, [gameMode, onlineMode, roomCode, startOnlineGame]);
+
+  // Sync game state for online play: poll for opponent's moves
+  useEffect(() => {
+    if (gameMode !== "online" || onlineMode !== "playing" || !roomCode) return;
+
+    const poll = setInterval(() => {
+      const room = getRoom(roomCode);
+      if (!room?.gameState) return;
+
+      try {
+        const remote = JSON.parse(room.gameState);
+        const local = stateRef.current;
+        const remoteMoves: unknown[] = remote.moveHistory || [];
+        const localMoveCount = local.moveHistory.length;
+
+        // Only apply if opponent has made a new move
+        if (remoteMoves.length > localMoveCount) {
+          const renderer = rendererRef.current;
+
+          // Apply missing moves one by one (animating the last one)
+          let tempState = local;
+          for (let i = localMoveCount; i < remoteMoves.length; i++) {
+            const move = remoteMoves[i] as { outerRow: number; outerCol: number; innerRow: number; innerCol: number };
+            // Only animate the last (newest) move
+            if (i === remoteMoves.length - 1 && renderer) {
+              renderer.animatePiece(move.outerRow, move.outerCol, move.innerRow, move.innerCol, tempState.currentPlayer);
+            }
+            tempState = makeMove(tempState, move);
+          }
+
+          stateRef.current = tempState;
+          setGameState(tempState);
+
+          // Save synced state back to room
+          updateRoomGameState(roomCode, serializeGameState(tempState));
+
+          // Show win/draw message
+          if (tempState.gameWinner) {
+            setWinMessage(
+              tempState.gameWinner === "X"
+                ? t("game.playerXWins", language)
+                : t("game.playerOWins", language)
+            );
+          } else if (tempState.isDraw) {
+            setWinMessage(t("game.draw", language));
+          }
+        }
+      } catch { /* ignore parse errors */ }
+    }, 800); // Poll frequently for responsive gameplay
+
+    return () => clearInterval(poll);
+  }, [gameMode, onlineMode, roomCode, language, serializeGameState]);
 
   const isXTurn = gameState.currentPlayer === "X";
   const gameActive = !gameState.gameWinner && !gameState.isDraw;
@@ -254,7 +386,7 @@ export default function GameCanvas() {
               <span style={{ color: "#38bdf8", fontSize: 20, textShadow: "0 0 10px #38bdf8", lineHeight: 1 }}>✕</span>
               <div>
                 <div style={{ color: "rgba(255,255,255,0.5)", fontSize: 9, letterSpacing: "0.15em", textTransform: "uppercase" }}>
-                  {gameMode === "pvc" ? "YOU" : "PLAYER X"}
+                  {gameMode === "pvc" ? t("game.you", language) : t("game.playerX", language)}
                 </div>
                 <div style={{ color: "#38bdf8", fontSize: 22, fontWeight: 700, lineHeight: 1, textShadow: "0 0 10px #38bdf8" }}>
                   {gameState.scores.X}
@@ -267,7 +399,7 @@ export default function GameCanvas() {
               {gameActive ? (
                 <>
                   <div style={{ color: "rgba(255,255,255,0.35)", fontSize: 9, letterSpacing: "0.2em", textTransform: "uppercase", marginBottom: 2 }}>
-                    TURN
+                    {t("game.turn", language)}
                   </div>
                   <div style={{
                     color: isXTurn ? "#38bdf8" : "#f87171",
@@ -278,21 +410,21 @@ export default function GameCanvas() {
                   }}>
                     {isAIThinking ? (
                       <span className="flex items-center gap-1">
-                        AI
+                        {t("game.ai", language)}
                         {[0,1,2].map(i => (
                           <span key={i} style={{ display: "inline-block", width: 4, height: 4, borderRadius: "50%", background: "#f87171", animation: `blink 0.9s ease-in-out ${i*0.2}s infinite` }} />
                         ))}
                       </span>
                     ) : (
                       gameMode === "pvc"
-                        ? (isXTurn ? "YOUR MOVE" : "AI MOVE")
-                        : `PLAYER ${gameState.currentPlayer}`
+                        ? (isXTurn ? t("game.yourMove", language) : t("game.aiMove", language))
+                        : t("game.playerTurn", language).replace("{player}", gameState.currentPlayer)
                     )}
                   </div>
                 </>
               ) : (
                 <div style={{ color: "#fbbf24", fontSize: 11, fontWeight: 700, letterSpacing: "0.15em", textShadow: "0 0 10px #fbbf24" }}>
-                  GAME OVER
+                  {t("game.gameOver", language)}
                 </div>
               )}
             </div>
@@ -312,7 +444,7 @@ export default function GameCanvas() {
               <span style={{ color: "#f87171", fontSize: 20, textShadow: "0 0 10px #f87171", lineHeight: 1 }}>○</span>
               <div style={{ textAlign: "right" }}>
                 <div style={{ color: "rgba(255,255,255,0.5)", fontSize: 9, letterSpacing: "0.15em", textTransform: "uppercase" }}>
-                  {gameMode === "pvc" ? "AI" : "PLAYER O"}
+                  {gameMode === "pvc" ? t("game.ai", language) : t("game.playerO", language)}
                 </div>
                 <div style={{ color: "#f87171", fontSize: 22, fontWeight: 700, lineHeight: 1, textShadow: "0 0 10px #f87171" }}>
                   {gameState.scores.O}
@@ -327,7 +459,7 @@ export default function GameCanvas() {
             style={{ height: 52, borderTop: "1px solid rgba(255,255,255,0.06)", background: "rgba(15,23,42,0.8)", backdropFilter: "blur(12px)" }}
           >
             <div style={{ color: "rgba(255,255,255,0.25)", fontSize: 10, letterSpacing: "0.1em" }} className="hidden md:block">
-              GOLD BORDER = ACTIVE BOARD
+              {t("hud.goldBorder", language)}
             </div>
             <div className="flex gap-2 mx-auto md:mx-0">
               <button
@@ -349,7 +481,7 @@ export default function GameCanvas() {
                 onMouseEnter={e => { (e.target as HTMLElement).style.background = "rgba(251,191,36,0.1)"; }}
                 onMouseLeave={e => { (e.target as HTMLElement).style.background = "transparent"; }}
               >
-                NEW GAME
+                {t("game.newGame", language)}
               </button>
               <button
                 onClick={handleBackToMenu}
@@ -369,11 +501,11 @@ export default function GameCanvas() {
                 onMouseEnter={e => { (e.target as HTMLElement).style.color = "rgba(255,255,255,0.7)"; }}
                 onMouseLeave={e => { (e.target as HTMLElement).style.color = "rgba(255,255,255,0.4)"; }}
               >
-                MENU
+                {t("game.menu", language)}
               </button>
             </div>
             <div style={{ color: "rgba(255,255,255,0.25)", fontSize: 10, letterSpacing: "0.1em" }} className="hidden md:block">
-              PLAY IN A CELL → SEND OPPONENT THERE
+              {t("hud.sendOpponent", language)}
             </div>
           </div>
         </div>
@@ -384,7 +516,7 @@ export default function GameCanvas() {
         <div
           className="absolute inset-0 flex items-center justify-center pointer-events-auto"
           style={{ background: "rgba(15,23,42,0.75)", backdropFilter: "blur(6px)" }}
-          onClick={winMessage === "ONLINE MODE COMING SOON" ? handleBackToMenu : handleNewGame}
+          onClick={handleNewGame}
         >
           <div
             style={{
@@ -399,34 +531,27 @@ export default function GameCanvas() {
             }}
           >
             <div style={{ color: "rgba(255,255,255,0.3)", fontSize: 10, letterSpacing: "0.3em", marginBottom: 12 }}>
-              {winMessage === "ONLINE MODE COMING SOON" ? "FEATURE" : "GAME OVER"}
+              {t("game.gameOver", language)}
             </div>
             <div style={{
-              color: winMessage === "DRAW" ? "#94a3b8" : winMessage === "ONLINE MODE COMING SOON" ? "#38bdf8" : "#fbbf24",
+              color: winMessage && winMessage !== t("game.draw", language) ? "#fbbf24" : "#94a3b8",
               fontSize: 36,
               fontWeight: 700,
               letterSpacing: "0.05em",
-              textShadow: winMessage === "DRAW" ? "none" : winMessage === "ONLINE MODE COMING SOON" ? "0 0 24px rgba(56,189,248,0.6)" : "0 0 24px rgba(251,191,36,0.6)",
+              textShadow: winMessage && winMessage !== t("game.draw", language) ? "0 0 24px rgba(251,191,36,0.6)" : "none",
               marginBottom: 16,
             }}>
               {winMessage}
             </div>
-            {winMessage !== "ONLINE MODE COMING SOON" && (
-              <div style={{ color: "rgba(255,255,255,0.3)", fontSize: 11, letterSpacing: "0.1em", marginBottom: 28 }}>
-                <span style={{ color: "#38bdf8" }}>X</span>
-                <span style={{ color: "rgba(255,255,255,0.2)", margin: "0 8px" }}>—</span>
-                <span style={{ color: "#38bdf8", fontWeight: 700 }}>{gameState.scores.X}</span>
-                <span style={{ color: "rgba(255,255,255,0.2)", margin: "0 16px" }}>·</span>
-                <span style={{ color: "#f87171" }}>O</span>
-                <span style={{ color: "rgba(255,255,255,0.2)", margin: "0 8px" }}>—</span>
-                <span style={{ color: "#f87171", fontWeight: 700 }}>{gameState.scores.O}</span>
-              </div>
-            )}
-            {winMessage === "ONLINE MODE COMING SOON" && (
-              <div style={{ color: "rgba(255,255,255,0.4)", fontSize: 12, lineHeight: 1.6, marginBottom: 28 }}>
-                联机对战功能即将推出。敬请期待！
-              </div>
-            )}
+            <div style={{ color: "rgba(255,255,255,0.3)", fontSize: 11, letterSpacing: "0.1em", marginBottom: 28 }}>
+              <span style={{ color: "#38bdf8" }}>X</span>
+              <span style={{ color: "rgba(255,255,255,0.2)", margin: "0 8px" }}>—</span>
+              <span style={{ color: "#38bdf8", fontWeight: 700 }}>{gameState.scores.X}</span>
+              <span style={{ color: "rgba(255,255,255,0.2)", margin: "0 16px" }}>·</span>
+              <span style={{ color: "#f87171" }}>O</span>
+              <span style={{ color: "rgba(255,255,255,0.2)", margin: "0 8px" }}>—</span>
+              <span style={{ color: "#f87171", fontWeight: 700 }}>{gameState.scores.O}</span>
+            </div>
             <button
               style={{
                 fontFamily: "'Space Mono', monospace",
@@ -442,10 +567,10 @@ export default function GameCanvas() {
                 textShadow: "0 0 8px rgba(251,191,36,0.5)",
               }}
             >
-              PLAY AGAIN
+              {t("game.playAgain", language)}
             </button>
             <div style={{ color: "rgba(255,255,255,0.2)", fontSize: 10, marginTop: 12, letterSpacing: "0.1em" }}>
-              CLICK ANYWHERE TO CONTINUE
+              {t("game.clickToContinue", language)}
             </div>
           </div>
         </div>
@@ -471,10 +596,10 @@ export default function GameCanvas() {
           >
             <div style={{ textAlign: "center", marginBottom: 32 }}>
               <div style={{ color: "#fbbf24", fontSize: 16, fontWeight: 700, letterSpacing: "0.25em", textShadow: "0 0 12px rgba(251,191,36,0.5)", marginBottom: 12 }}>
-                SELECT DIFFICULTY
+                {t("difficulty.title", language)}
               </div>
               <div style={{ color: "rgba(255,255,255,0.4)", fontSize: 11, letterSpacing: "0.1em" }}>
-                Choose your AI opponent strength
+                {t("difficulty.chooseDesc", language)}
               </div>
             </div>
 
@@ -508,9 +633,9 @@ export default function GameCanvas() {
                     el.style.borderColor = "rgba(255,255,255,0.15)";
                   }}
                 >
-                  {diff === "easy" && "🟢 Easy"}
-                  {diff === "medium" && "🟡 Medium"}
-                  {diff === "hard" && "🔴 Hard"}
+                  {diff === "easy" && `🟢 ${t("difficulty.easy", language)}`}
+                  {diff === "medium" && `🟡 ${t("difficulty.medium", language)}`}
+                  {diff === "hard" && `🔴 ${t("difficulty.hard", language)}`}
                 </button>
               ))}
             </div>
@@ -541,14 +666,14 @@ export default function GameCanvas() {
                 el.style.color = "rgba(255,255,255,0.3)";
               }}
             >
-              BACK
+              {t("online.back", language)}
             </button>
           </div>
         </div>
       )}
 
       {/* ── MAIN MENU ── */}
-      {showMenu && !showDifficultySelect && (
+      {showMenu && !showDifficultySelect && gameMode !== "online" && (
         <div
           className="absolute inset-0 flex items-center justify-center pointer-events-auto"
           style={{ background: "rgba(15,23,42,0.6)", backdropFilter: "blur(2px)" }}
@@ -582,7 +707,7 @@ export default function GameCanvas() {
             {/* Tactical divider */}
             <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 20 }}>
               <div style={{ flex: 1, height: 1, background: "rgba(255,255,255,0.08)" }} />
-              <div style={{ color: "rgba(255,255,255,0.2)", fontSize: 9, letterSpacing: "0.2em" }}>MISSION BRIEF</div>
+              <div style={{ color: "rgba(255,255,255,0.2)", fontSize: 9, letterSpacing: "0.2em" }}>{t("menu.mission", language)}</div>
               <div style={{ flex: 1, height: 1, background: "rgba(255,255,255,0.08)" }} />
             </div>
 
@@ -600,9 +725,7 @@ export default function GameCanvas() {
                 letterSpacing: "0.02em",
               }}
             >
-              Win <span style={{ color: "#fbbf24", fontWeight: 700 }}>3 sub-boards</span> in a row to claim victory.
-              Your move determines which sub-board your opponent must attack next.
-              <span style={{ color: "#fbbf24" }}> Gold border</span> marks the active zone.
+              <span style={{ color: "#fbbf24", fontWeight: 700 }}>{t("menu.missionText", language)}</span>
             </div>
 
             {/* Mode selector */}
@@ -641,7 +764,7 @@ export default function GameCanvas() {
                   <span style={{ color: "rgba(255,255,255,0.3)", fontSize: 10 }}>VS</span>
                   <span style={{ color: "#f87171", textShadow: "0 0 8px #f87171" }}>○</span>
                 </span>
-                <span>2 PLAYERS</span>
+                <span>{t("menu.2players", language)}</span>
                 <span style={{ color: "rgba(255,255,255,0.2)", fontSize: 14 }}>›</span>
               </button>
 
@@ -679,7 +802,7 @@ export default function GameCanvas() {
                   <span style={{ color: "rgba(255,255,255,0.3)", fontSize: 10 }}>VS</span>
                   <span style={{ fontSize: 16 }}>🤖</span>
                 </span>
-                <span>VS AI</span>
+                <span>{t("menu.vsAI", language)}</span>
                 <span style={{ color: "rgba(255,255,255,0.2)", fontSize: 14 }}>›</span>
               </button>
 
@@ -717,14 +840,14 @@ export default function GameCanvas() {
                   <span style={{ color: "rgba(255,255,255,0.3)", fontSize: 10 }}>VS</span>
                   <span style={{ color: "#f87171", textShadow: "0 0 8px #f87171" }}>○</span>
                 </span>
-                <span>ONLINE</span>
+                <span>{t("menu.online", language)}</span>
                 <span style={{ color: "rgba(255,255,255,0.2)", fontSize: 14 }}>›</span>
               </button>
             </div>
 
             {/* Footer */}
             <div style={{ textAlign: "center", marginTop: 20, color: "rgba(255,255,255,0.15)", fontSize: 9, letterSpacing: "0.2em" }}>
-              ULTIMATE TIC TAC TOE · NEON GRID COMMAND
+              {t("brand.footer", language)}
             </div>
           </div>
         </div>
@@ -751,7 +874,7 @@ export default function GameCanvas() {
           >
             <div style={{ textAlign: "center", marginBottom: 32 }}>
               <div style={{ color: "#f87171", fontSize: 16, fontWeight: 700, letterSpacing: "0.25em", textShadow: "0 0 12px rgba(248,113,113,0.5)", marginBottom: 12 }}>
-                ONLINE BATTLE
+                {t("online.title", language)}
               </div>
             </div>
 
@@ -782,7 +905,7 @@ export default function GameCanvas() {
                   el.style.borderColor = "rgba(248,113,113,0.3)";
                 }}
               >
-                CREATE ROOM
+                {t("online.createRoom", language)}
               </button>
               <button
                 onClick={() => setOnlineMode("join")}
@@ -810,7 +933,7 @@ export default function GameCanvas() {
                   el.style.borderColor = "rgba(56,189,248,0.3)";
                 }}
               >
-                JOIN ROOM
+                {t("online.joinRoom", language)}
               </button>
               <button
                 onClick={handleBackToMenu}
@@ -838,7 +961,7 @@ export default function GameCanvas() {
                   el.style.borderColor = "rgba(255,255,255,0.15)";
                 }}
               >
-                BACK
+                {t("online.back", language)}
               </button>
             </div>
           </div>
@@ -865,10 +988,10 @@ export default function GameCanvas() {
           >
             <div style={{ textAlign: "center", marginBottom: 24 }}>
               <div style={{ color: "#38bdf8", fontSize: 16, fontWeight: 700, letterSpacing: "0.25em", textShadow: "0 0 12px rgba(56,189,248,0.5)", marginBottom: 12 }}>
-                JOIN ROOM
+                {t("online.joinRoom", language)}
               </div>
               <div style={{ color: "rgba(255,255,255,0.4)", fontSize: 11, letterSpacing: "0.1em" }}>
-                Enter a 6-digit room code
+                {t("online.enterCode", language)}
               </div>
             </div>
 
@@ -920,7 +1043,7 @@ export default function GameCanvas() {
                   el.style.background = "rgba(56,189,248,0.12)";
                 }}
               >
-                JOIN
+                {t("online.join", language)}
               </button>
               <button
                 onClick={() => setOnlineMode("menu")}
@@ -946,7 +1069,7 @@ export default function GameCanvas() {
                   el.style.background = "rgba(255,255,255,0.03)";
                 }}
               >
-                BACK
+                {t("online.back", language)}
               </button>
             </div>
           </div>
@@ -973,44 +1096,74 @@ export default function GameCanvas() {
             }}
           >
             <div style={{ color: "#f87171", fontSize: 16, fontWeight: 700, letterSpacing: "0.25em", textShadow: "0 0 12px rgba(248,113,113,0.5)", marginBottom: 24 }}>
-              ROOM CREATED
+              {t("online.roomCreated", language)}
             </div>
             <div style={{ color: "rgba(255,255,255,0.5)", fontSize: 32, fontWeight: 700, letterSpacing: "0.3em", fontFamily: "'Space Mono', monospace", marginBottom: 24 }}>
               {roomCode}
             </div>
             <div style={{ color: "rgba(255,255,255,0.4)", fontSize: 11, letterSpacing: "0.1em", marginBottom: 24 }}>
-              Share this code with your opponent
+              {t("online.shareCodeDesc", language)}
             </div>
-            <button
-              onClick={handleCopyLink}
-              style={{
-                fontFamily: "'Space Mono', monospace",
-                background: "rgba(248,113,113,0.12)",
-                border: "1px solid rgba(248,113,113,0.4)",
-                color: "#f87171",
-                fontSize: 13,
-                fontWeight: 700,
-                letterSpacing: "0.12em",
-                padding: "14px 20px",
-                borderRadius: 4,
-                cursor: "pointer",
-                width: "100%",
-                marginBottom: 10,
-                transition: "all 0.2s ease",
-              }}
-              onMouseEnter={e => {
-                const el = e.currentTarget;
-                el.style.background = "rgba(248,113,113,0.16)";
-              }}
-              onMouseLeave={e => {
-                const el = e.currentTarget;
-                el.style.background = "rgba(248,113,113,0.12)";
-              }}
-            >
-              COPY LINK
-            </button>
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              <button
+                onClick={handleCopyLink}
+                style={{
+                  fontFamily: "'Space Mono', monospace",
+                  background: "rgba(248,113,113,0.12)",
+                  border: "1px solid rgba(248,113,113,0.4)",
+                  color: "#f87171",
+                  fontSize: 13,
+                  fontWeight: 700,
+                  letterSpacing: "0.12em",
+                  padding: "14px 20px",
+                  borderRadius: 4,
+                  cursor: "pointer",
+                  width: "100%",
+                  transition: "all 0.2s ease",
+                }}
+                onMouseEnter={e => {
+                  const el = e.currentTarget;
+                  el.style.background = "rgba(248,113,113,0.16)";
+                }}
+                onMouseLeave={e => {
+                  const el = e.currentTarget;
+                  el.style.background = "rgba(248,113,113,0.12)";
+                }}
+              >
+                {t("online.copyLink", language)}
+              </button>
+              <button
+                onClick={handleBackToMenu}
+                style={{
+                  fontFamily: "'Space Mono', monospace",
+                  background: "rgba(255,255,255,0.03)",
+                  border: "1px solid rgba(255,255,255,0.15)",
+                  color: "#ffffff",
+                  fontSize: 13,
+                  fontWeight: 700,
+                  letterSpacing: "0.12em",
+                  padding: "14px 20px",
+                  borderRadius: 4,
+                  cursor: "pointer",
+                  width: "100%",
+                  transition: "all 0.2s ease",
+                }}
+                onMouseEnter={e => {
+                  const el = e.currentTarget;
+                  el.style.background = "rgba(255,255,255,0.06)";
+                  el.style.borderColor = "rgba(255,255,255,0.3)";
+                }}
+                onMouseLeave={e => {
+                  const el = e.currentTarget;
+                  el.style.background = "rgba(255,255,255,0.03)";
+                  el.style.borderColor = "rgba(255,255,255,0.15)";
+                }}
+              >
+                {t("online.cancel", language)}
+              </button>
+            </div>
             <div style={{ color: "rgba(255,255,255,0.3)", fontSize: 10, letterSpacing: "0.1em", marginTop: 16 }}>
-              Waiting for opponent...
+              {t("online.waitingForOpponent", language)}
             </div>
           </div>
         </div>

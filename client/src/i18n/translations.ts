@@ -17,6 +17,7 @@ export const translations: Record<Language, Translations> = {
 
     // Difficulty
     "difficulty.title": "选择难度",
+    "difficulty.chooseDesc": "选择AI对手强度",
     "difficulty.easy": "简单",
     "difficulty.medium": "中等",
     "difficulty.hard": "困难",
@@ -33,6 +34,8 @@ export const translations: Record<Language, Translations> = {
     "online.shareLink": "分享链接",
     "online.copyLink": "复制链接",
     "online.roomCreated": "房间已创建",
+    "online.shareCodeDesc": "将此代码分享给对手",
+    "online.cancel": "取消",
     "online.waitingForOpponent": "等待对手加入...",
     "online.opponentJoined": "对手已加入！",
     "online.invalidCode": "无效的房间号码",
@@ -54,6 +57,19 @@ export const translations: Record<Language, Translations> = {
     "game.draw": "平局",
     "game.playAgain": "再玩一次",
     "game.menu": "返回菜单",
+    "game.newGame": "新游戏",
+    "game.turn": "回合",
+    "game.yourMove": "你的回合",
+    "game.aiMove": "AI 回合",
+    "game.playerTurn": "玩家 {player}",
+    "game.clickToContinue": "点击任意处继续",
+
+    // HUD
+    "hud.goldBorder": "金色边框 = 活跃棋盘",
+    "hud.sendOpponent": "落子决定对手位置",
+
+    // Brand
+    "brand.footer": "终极井字棋 · 霓虹网格指挥",
 
     // Settings
     "settings.language": "语言",
@@ -70,6 +86,7 @@ export const translations: Record<Language, Translations> = {
 
     // Difficulty
     "difficulty.title": "SELECT DIFFICULTY",
+    "difficulty.chooseDesc": "Choose your AI opponent strength",
     "difficulty.easy": "EASY",
     "difficulty.medium": "MEDIUM",
     "difficulty.hard": "HARD",
@@ -86,6 +103,8 @@ export const translations: Record<Language, Translations> = {
     "online.shareLink": "SHARE LINK",
     "online.copyLink": "COPY LINK",
     "online.roomCreated": "ROOM CREATED",
+    "online.shareCodeDesc": "Share this code with your opponent",
+    "online.cancel": "CANCEL",
     "online.waitingForOpponent": "WAITING FOR OPPONENT...",
     "online.opponentJoined": "OPPONENT JOINED!",
     "online.invalidCode": "INVALID ROOM CODE",
@@ -107,6 +126,19 @@ export const translations: Record<Language, Translations> = {
     "game.draw": "DRAW",
     "game.playAgain": "PLAY AGAIN",
     "game.menu": "BACK TO MENU",
+    "game.newGame": "NEW GAME",
+    "game.turn": "TURN",
+    "game.yourMove": "YOUR MOVE",
+    "game.aiMove": "AI MOVE",
+    "game.playerTurn": "PLAYER {player}",
+    "game.clickToContinue": "CLICK ANYWHERE TO CONTINUE",
+
+    // HUD
+    "hud.goldBorder": "GOLD BORDER = ACTIVE BOARD",
+    "hud.sendOpponent": "PLAY IN A CELL → SEND OPPONENT THERE",
+
+    // Brand
+    "brand.footer": "ULTIMATE TIC TAC TOE · NEON GRID COMMAND",
 
     // Settings
     "settings.language": "LANGUAGE",
@@ -123,6 +155,7 @@ export const translations: Record<Language, Translations> = {
 
     // Difficulty
     "difficulty.title": "SÉLECTIONNER DIFFICULTÉ",
+    "difficulty.chooseDesc": "Choisissez la force de l'IA adverse",
     "difficulty.easy": "FACILE",
     "difficulty.medium": "MOYEN",
     "difficulty.hard": "DIFFICILE",
@@ -139,6 +172,8 @@ export const translations: Record<Language, Translations> = {
     "online.shareLink": "PARTAGER LIEN",
     "online.copyLink": "COPIER LIEN",
     "online.roomCreated": "SALLE CRÉÉE",
+    "online.shareCodeDesc": "Partagez ce code avec votre adversaire",
+    "online.cancel": "ANNULER",
     "online.waitingForOpponent": "EN ATTENTE D'ADVERSAIRE...",
     "online.opponentJoined": "ADVERSAIRE A REJOINT!",
     "online.invalidCode": "CODE SALLE INVALIDE",
@@ -160,6 +195,19 @@ export const translations: Record<Language, Translations> = {
     "game.draw": "ÉGALITÉ",
     "game.playAgain": "REJOUER",
     "game.menu": "RETOUR AU MENU",
+    "game.newGame": "NOUVELLE PARTIE",
+    "game.turn": "TOUR",
+    "game.yourMove": "VOTRE COUP",
+    "game.aiMove": "COUP DE L'IA",
+    "game.playerTurn": "JOUEUR {player}",
+    "game.clickToContinue": "CLIQUEZ N'IMPORTE OÙ POUR CONTINUER",
+
+    // HUD
+    "hud.goldBorder": "BORDURE DORÉE = PLATEAU ACTIF",
+    "hud.sendOpponent": "JOUEZ DANS UNE CASE → ENVOYEZ L'ADVERSAIRE",
+
+    // Brand
+    "brand.footer": "ULTIMATE TIC TAC TOE · COMMANDE GRILLE NÉON",
 
     // Settings
     "settings.language": "LANGUE",
