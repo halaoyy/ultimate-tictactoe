@@ -85,6 +85,36 @@ export default function GameCanvas() {
     setGameState(newState);
   }, []);
 
+  // Auto-join room when URL has ?room=CODE — skip the menu entirely
+  useEffect(() => {
+    const urlRoomCode = getRoomCodeFromUrl();
+    if (!urlRoomCode) return;
+
+    console.log("[online] auto-joining room from URL:", urlRoomCode);
+    setGameMode("online");
+    setShowMenu(false);
+    connectSocket();
+
+    joinRoom(urlRoomCode, {
+      onSuccess: (data) => {
+        console.log("[online] auto-join success:", data.piece);
+        setRoomCode(urlRoomCode);
+        setPlayerPiece(data.piece);
+        setOnlineMode("playing");
+        setShowMenu(false);
+        setWinMessage(null);
+        syncState(deserializeState(data.gameState));
+      },
+      onError: (err) => {
+        console.error("[online] auto-join error:", err.message);
+        setShowMenu(true);
+        setOnlineMode("menu");
+        setGameMode("online");
+        setWinMessage(err.message);
+      },
+    });
+  }, []); // Run once on mount
+
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas || startedRef.current) return;
