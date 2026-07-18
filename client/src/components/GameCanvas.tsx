@@ -15,7 +15,28 @@ import {
 import { Renderer } from "@/game/renderer";
 import { getAIMove } from "@/game/ai";
 import { Language, t } from "@/i18n/translations";
-import { createRoom, joinRoom, getRoom, getRoomShareLink, getRoomCodeFromUrl, updateRoomGameState } from "@/game/online";
+import {
+  connectSocket,
+  disconnectSocket,
+  createRoom,
+  joinRoom,
+  sendMove,
+  requestRematch,
+  leaveRoom,
+  onOpponentJoined,
+  onGameStart,
+  onMoveMade,
+  onOpponentLeft,
+  onRematchStart,
+  offOpponentJoined,
+  offGameStart,
+  offMoveMade,
+  offOpponentLeft,
+  offRematchStart,
+  getRoomShareLink,
+  getRoomCodeFromUrl,
+  type SerializedGameState,
+} from "@/game/online";
 
 type GameMode = "pvp" | "pvc" | "online";
 type AIDifficulty = "easy" | "medium" | "hard";
@@ -43,18 +64,20 @@ export default function GameCanvas() {
   const [roomCodeInput, setRoomCodeInput] = useState<string>("");
   const [playerPiece, setPlayerPiece] = useState<Player>("X");
 
-  // Serialize game state for online sync (only the fields that change)
-  const serializeGameState = (state: GameState) => JSON.stringify({
-    board: state.board,
-    subBoardWinners: state.subBoardWinners,
-    subBoardDrawn: state.subBoardDrawn,
-    currentPlayer: state.currentPlayer,
-    nextBoard: state.nextBoard,
-    gameWinner: state.gameWinner,
-    isDraw: state.isDraw,
-    moveHistory: state.moveHistory,
-    lastMove: state.lastMove,
-    scores: state.scores,
+  // Reconstruct GameState from serialized data received from server
+  const deserializeState = (data: SerializedGameState): GameState => ({
+    board: data.board,
+    subBoardWinners: data.subBoardWinners,
+    subBoardDrawn: data.subBoardDrawn,
+    currentPlayer: data.currentPlayer,
+    nextBoard: data.nextBoard,
+    gameWinner: data.gameWinner,
+    isDraw: data.isDraw,
+    scores: data.scores,
+    moveHistory: data.moveHistory,
+    lastMove: data.lastMove,
+    gameMode: "online",
+    aiDifficulty: "medium",
   });
 
   const syncState = useCallback((newState: GameState) => {
@@ -117,12 +140,16 @@ export default function GameCanvas() {
 
       renderer.animatePiece(coord.outerRow, coord.outerCol, coord.innerRow, coord.innerCol, state.currentPlayer);
       const newState = makeMove(state, coord);
-      syncState(newState);
 
-      // Save state to room for online play
+      // In online mode: apply locally + send to server
       if (gameMode === "online" && roomCode) {
-        updateRoomGameState(roomCode, serializeGameState(newState));
+        syncState(newState);
+        sendMove(roomCode, coord);
+        // Win/draw messages are set by the server's move_made broadcast
+        return;
       }
+
+      syncState(newState);
 
       if (newState.gameWinner) {
         setWinMessage(
@@ -134,7 +161,7 @@ export default function GameCanvas() {
         setWinMessage(t("game.draw", language));
       }
     },
-    [gameMode, isAIThinking, syncState, language, roomCode, playerPiece, serializeGameState]
+    [gameMode, isAIThinking, syncState, language, roomCode, playerPiece]
   );
 
   useEffect(() => {
@@ -169,14 +196,6 @@ export default function GameCanvas() {
     syncState(resetGame(stateRef.current));
   }, [syncState]);
 
-  // Transition from online menus into actual gameplay
-  const startOnlineGame = useCallback(() => {
-    setOnlineMode("playing");
-    setShowMenu(false);
-    setWinMessage(null);
-    syncState(createInitialState({ gameMode: "online" }));
-  }, [syncState]);
-
   const handleStartGame = useCallback((mode: GameMode) => {
     if (mode === "pvc") {
       setShowDifficultySelect(true);
@@ -184,17 +203,24 @@ export default function GameCanvas() {
     }
     if (mode === "online") {
       setGameMode("online");
-      // Keep showMenu=true so online sub-menus are visible
       setOnlineMode("menu");
+      // Connect socket proactively
+      connectSocket();
       const urlRoomCode = getRoomCodeFromUrl();
       if (urlRoomCode) {
-        if (joinRoom(urlRoomCode)) {
-          setRoomCode(urlRoomCode);
-          setPlayerPiece("O");
-          startOnlineGame();
-        } else {
-          setWinMessage(t("online.roomNotFound", language));
-        }
+        joinRoom(urlRoomCode, {
+          onSuccess: (data) => {
+            setRoomCode(urlRoomCode);
+            setPlayerPiece(data.piece);
+            setOnlineMode("playing");
+            setShowMenu(false);
+            setWinMessage(null);
+            syncState(deserializeState(data.gameState));
+          },
+          onError: (err) => {
+            setWinMessage(err.message);
+          },
+        });
       }
       return;
     }
@@ -203,13 +229,15 @@ export default function GameCanvas() {
     setShowMenu(false);
     setWinMessage(null);
     syncState(createInitialState({ gameMode: mode, aiDifficulty }));
-  }, [syncState, aiDifficulty, language, startOnlineGame]);
+  }, [syncState, aiDifficulty, language]);
 
   const handleCreateRoom = useCallback(() => {
-    const code = createRoom();
-    setRoomCode(code);
-    setPlayerPiece("X");
-    setOnlineMode("waiting");
+    connectSocket();
+    createRoom((data) => {
+      setRoomCode(data.roomCode);
+      setPlayerPiece("X");
+      setOnlineMode("waiting");
+    });
   }, []);
 
   const handleJoinRoom = useCallback(() => {
@@ -218,14 +246,21 @@ export default function GameCanvas() {
       setWinMessage(t("online.invalidCode", language));
       return;
     }
-    if (joinRoom(code)) {
-      setRoomCode(code);
-      setPlayerPiece("O");
-      startOnlineGame();
-    } else {
-      setWinMessage(t("online.roomNotFound", language));
-    }
-  }, [roomCodeInput, language, startOnlineGame]);
+    connectSocket();
+    joinRoom(code, {
+      onSuccess: (data) => {
+        setRoomCode(code);
+        setPlayerPiece(data.piece);
+        setOnlineMode("playing");
+        setShowMenu(false);
+        setWinMessage(null);
+        syncState(deserializeState(data.gameState));
+      },
+      onError: (err) => {
+        setWinMessage(err.message);
+      },
+    });
+  }, [roomCodeInput, language]);
 
   const handleCopyLink = useCallback(() => {
     const link = getRoomShareLink(roomCode);
@@ -254,101 +289,106 @@ export default function GameCanvas() {
     setOnlineMode("menu");
     setRoomCode("");
     setRoomCodeInput("");
+    // Disconnect from online server
+    disconnectSocket();
     syncState(createInitialState());
   }, [syncState]);
 
-  // Polling / storage listener: detect when opponent joins the room
+  // ── Socket.IO event listeners for online mode ──────────────────────
+
+  // Listen for opponent joining (host side)
   useEffect(() => {
-    if (gameMode !== "online" || onlineMode !== "waiting" || !roomCode) return;
+    if (gameMode !== "online" || onlineMode !== "waiting") return;
 
-    const ROOM_KEY = `utt_room_${roomCode}`;
-
-    // Check if opponent has already joined (e.g. page refresh)
-    const checkRoom = () => {
-      const data = localStorage.getItem(ROOM_KEY);
-      if (!data) return;
-      try {
-        const room = JSON.parse(data);
-        if (room.playerO) {
-          startOnlineGame();
-        }
-      } catch { /* ignore */ }
+    const onJoined = () => {
+      setOnlineMode("playing");
+      setShowMenu(false);
+      setWinMessage(null);
     };
 
-    // Listen for changes from other tabs
-    const onStorage = (e: StorageEvent) => {
-      if (e.key === ROOM_KEY && e.newValue) {
-        try {
-          const room = JSON.parse(e.newValue);
-          if (room.playerO) {
-            startOnlineGame();
-          }
-        } catch { /* ignore */ }
+    onOpponentJoined(onJoined);
+    return () => { offOpponentJoined(onJoined); };
+  }, [gameMode, onlineMode]);
+
+  // Listen for game_start from server (after both players are in)
+  useEffect(() => {
+    if (gameMode !== "online") return;
+
+    const onStart = (data: { piece: "X" | "O"; gameState: SerializedGameState }) => {
+      setPlayerPiece(data.piece);
+      setOnlineMode("playing");
+      setShowMenu(false);
+      setWinMessage(null);
+      syncState(deserializeState(data.gameState));
+    };
+
+    onGameStart(onStart);
+    return () => { offGameStart(onStart); };
+  }, [gameMode, syncState]);
+
+  // Listen for opponent's moves
+  useEffect(() => {
+    if (gameMode !== "online" || onlineMode !== "playing") return;
+
+    const onMove = (data: { move: { outerRow: number; outerCol: number; innerRow: number; innerCol: number }; gameState: SerializedGameState }) => {
+      const local = stateRef.current;
+      const remoteState = deserializeState(data.gameState);
+
+      // Only apply if the move is new (not our own move reflected back)
+      if (remoteState.moveHistory.length > local.moveHistory.length) {
+        const renderer = rendererRef.current;
+        // The last move is the opponent's new move
+        const lastMove = remoteState.lastMove;
+        if (lastMove && renderer) {
+          // Determine opponent's piece for animation
+          const opponentPiece: Player = playerPiece === "X" ? "O" : "X";
+          renderer.animatePiece(lastMove.outerRow, lastMove.outerCol, lastMove.innerRow, lastMove.innerCol, opponentPiece);
+        }
+
+        stateRef.current = remoteState;
+        setGameState(remoteState);
+
+        if (remoteState.gameWinner) {
+          setWinMessage(
+            remoteState.gameWinner === "X"
+              ? t("game.playerXWins", language)
+              : t("game.playerOWins", language)
+          );
+        } else if (remoteState.isDraw) {
+          setWinMessage(t("game.draw", language));
+        }
       }
     };
 
-    window.addEventListener("storage", onStorage);
+    onMoveMade(onMove);
+    return () => { offMoveMade(onMove); };
+  }, [gameMode, onlineMode, language, playerPiece]);
 
-    // Poll every 2s as fallback (same-tab or cross-device stub)
-    const poll = setInterval(checkRoom, 2000);
-
-    return () => {
-      window.removeEventListener("storage", onStorage);
-      clearInterval(poll);
-    };
-  }, [gameMode, onlineMode, roomCode, startOnlineGame]);
-
-  // Sync game state for online play: poll for opponent's moves
+  // Listen for opponent disconnect
   useEffect(() => {
-    if (gameMode !== "online" || onlineMode !== "playing" || !roomCode) return;
+    if (gameMode !== "online") return;
 
-    const poll = setInterval(() => {
-      const room = getRoom(roomCode);
-      if (!room?.gameState) return;
+    const onLeft = () => {
+      setWinMessage(t("online.roomNotFound", language) || "Opponent left");
+      setOnlineMode("menu");
+    };
 
-      try {
-        const remote = JSON.parse(room.gameState);
-        const local = stateRef.current;
-        const remoteMoves: unknown[] = remote.moveHistory || [];
-        const localMoveCount = local.moveHistory.length;
+    onOpponentLeft(onLeft);
+    return () => { offOpponentLeft(onLeft); };
+  }, [gameMode, language]);
 
-        // Only apply if opponent has made a new move
-        if (remoteMoves.length > localMoveCount) {
-          const renderer = rendererRef.current;
+  // Listen for rematch
+  useEffect(() => {
+    if (gameMode !== "online") return;
 
-          // Apply missing moves one by one (animating the last one)
-          let tempState = local;
-          for (let i = localMoveCount; i < remoteMoves.length; i++) {
-            const move = remoteMoves[i] as { outerRow: number; outerCol: number; innerRow: number; innerCol: number };
-            // Only animate the last (newest) move
-            if (i === remoteMoves.length - 1 && renderer) {
-              renderer.animatePiece(move.outerRow, move.outerCol, move.innerRow, move.innerCol, tempState.currentPlayer);
-            }
-            tempState = makeMove(tempState, move);
-          }
+    const onRematch = (data: { gameState: SerializedGameState }) => {
+      setWinMessage(null);
+      syncState(deserializeState(data.gameState));
+    };
 
-          stateRef.current = tempState;
-          setGameState(tempState);
-
-          // Save synced state back to room
-          updateRoomGameState(roomCode, serializeGameState(tempState));
-
-          // Show win/draw message
-          if (tempState.gameWinner) {
-            setWinMessage(
-              tempState.gameWinner === "X"
-                ? t("game.playerXWins", language)
-                : t("game.playerOWins", language)
-            );
-          } else if (tempState.isDraw) {
-            setWinMessage(t("game.draw", language));
-          }
-        }
-      } catch { /* ignore parse errors */ }
-    }, 800); // Poll frequently for responsive gameplay
-
-    return () => clearInterval(poll);
-  }, [gameMode, onlineMode, roomCode, language, serializeGameState]);
+    onRematchStart(onRematch);
+    return () => { offRematchStart(onRematch); };
+  }, [gameMode, syncState]);
 
   const isXTurn = gameState.currentPlayer === "X";
   const gameActive = !gameState.gameWinner && !gameState.isDraw;

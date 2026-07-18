@@ -2,13 +2,17 @@ import express from "express";
 import { createServer } from "http";
 import path from "path";
 import { fileURLToPath } from "url";
+import { setupSocketIO } from "./socket-handler.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 async function startServer() {
   const app = express();
-  const server = createServer(app);
+  const httpServer = createServer(app);
+
+  // Attach Socket.IO for online multiplayer
+  setupSocketIO(httpServer);
 
   // Serve static files from dist/public in production
   const staticPath =
@@ -25,7 +29,7 @@ async function startServer() {
 
   const port = process.env.PORT || 3000;
 
-  server.listen(port, () => {
+  httpServer.listen(port, () => {
     console.log(`Server running on http://localhost:${port}/`);
   });
 }

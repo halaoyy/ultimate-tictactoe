@@ -1,91 +1,150 @@
-// Simple online room management using localStorage and URL parameters
-// In production, this would use WebSocket/Firebase for real-time sync
+// online.ts — Socket.IO client for real-time multiplayer
+// Replaces the localStorage-based room system with true WebSocket networking.
 
-export interface OnlineRoom {
-  roomCode: string;
-  createdAt: number;
-  playerX: string | null;
-  playerO: string | null;
-  gameState: string | null;
+import { io, Socket } from "socket.io-client";
+import type { BoardCoord, GameState } from "./state";
+
+// ── Types ──────────────────────────────────────────────────────────────
+
+export interface SerializedGameState {
+  board: GameState["board"];
+  subBoardWinners: GameState["subBoardWinners"];
+  subBoardDrawn: GameState["subBoardDrawn"];
+  currentPlayer: GameState["currentPlayer"];
+  nextBoard: GameState["nextBoard"];
+  gameWinner: GameState["gameWinner"];
+  isDraw: GameState["isDraw"];
+  scores: GameState["scores"];
+  moveHistory: GameState["moveHistory"];
+  lastMove: GameState["lastMove"];
 }
 
-const ROOM_PREFIX = "utt_room_";
-const ROOM_EXPIRY = 24 * 60 * 60 * 1000; // 24 hours
+type Callback<T = void> = T extends void ? () => void : (data: T) => void;
 
-export function generateRoomCode(): string {
-  return Math.random().toString(36).substring(2, 8).toUpperCase();
+// ── Singleton socket ───────────────────────────────────────────────────
+
+let socket: Socket | null = null;
+
+export function getSocket(): Socket | null {
+  return socket;
 }
 
-export function createRoom(): string {
-  const roomCode = generateRoomCode();
-  const room: OnlineRoom = {
-    roomCode,
-    createdAt: Date.now(),
-    playerX: generatePlayerId(),
-    playerO: null,
-    gameState: null,
-  };
-  localStorage.setItem(ROOM_PREFIX + roomCode, JSON.stringify(room));
-  return roomCode;
+export function connectSocket(): Socket {
+  if (socket?.connected) return socket;
+
+  // In dev mode, Vite runs on :3000 and the Vite plugin attaches Socket.IO there.
+  // In production, the Express server serves everything on the same port.
+  const url = window.location.origin;
+
+  socket = io(url, {
+    transports: ["websocket", "polling"],
+    reconnection: true,
+    reconnectionAttempts: 10,
+    reconnectionDelay: 1000,
+    reconnectionDelayMax: 5000,
+  });
+
+  socket.on("connect", () => {
+    console.log("[online] connected:", socket?.id);
+  });
+
+  socket.on("disconnect", (reason) => {
+    console.log("[online] disconnected:", reason);
+  });
+
+  socket.on("connect_error", (err) => {
+    console.error("[online] connection error:", err.message);
+  });
+
+  return socket;
 }
 
-export function joinRoom(roomCode: string): boolean {
-  const key = ROOM_PREFIX + roomCode;
-  const data = localStorage.getItem(key);
-  
-  if (!data) return false;
-  
-  const room: OnlineRoom = JSON.parse(data);
-  
-  // Check if room is expired
-  if (Date.now() - room.createdAt > ROOM_EXPIRY) {
-    localStorage.removeItem(key);
-    return false;
-  }
-  
-  // Check if room is full
-  if (room.playerX && room.playerO) return false;
-  
-  // Assign player O if not assigned
-  if (!room.playerO) {
-    room.playerO = generatePlayerId();
-    localStorage.setItem(key, JSON.stringify(room));
-  }
-  
-  return true;
+export function disconnectSocket() {
+  socket?.disconnect();
+  socket = null;
 }
 
-export function getRoom(roomCode: string): OnlineRoom | null {
-  const key = ROOM_PREFIX + roomCode;
-  const data = localStorage.getItem(key);
-  
-  if (!data) return null;
-  
-  const room: OnlineRoom = JSON.parse(data);
-  
-  // Check if room is expired
-  if (Date.now() - room.createdAt > ROOM_EXPIRY) {
-    localStorage.removeItem(key);
-    return null;
-  }
-  
-  return room;
+// ── Room management ────────────────────────────────────────────────────
+
+export function createRoom(callback: Callback<{ roomCode: string }>) {
+  const s = connectSocket();
+  s.emit("create_room");
+  s.once("room_created", callback);
 }
 
-export function updateRoomGameState(roomCode: string, gameState: string): void {
-  const key = ROOM_PREFIX + roomCode;
-  const data = localStorage.getItem(key);
-  
-  if (!data) return;
-  
-  const room: OnlineRoom = JSON.parse(data);
-  room.gameState = gameState;
-  localStorage.setItem(key, JSON.stringify(room));
+export function joinRoom(roomCode: string, callbacks: {
+  onSuccess: Callback<{ piece: "X" | "O"; gameState: SerializedGameState }>;
+  onError: Callback<{ message: string }>;
+}) {
+  const s = connectSocket();
+  s.emit("join_room", { roomCode: roomCode.toUpperCase() });
+  s.once("game_start", callbacks.onSuccess);
+  s.once("error", callbacks.onError);
 }
 
-export function generatePlayerId(): string {
-  return "player_" + Math.random().toString(36).substring(2, 10);
+export function sendMove(roomCode: string, move: BoardCoord) {
+  socket?.emit("make_move", { roomCode, move });
 }
+
+export function requestRematch(roomCode: string) {
+  socket?.emit("request_rematch", { roomCode });
+}
+
+export function leaveRoom(roomCode: string) {
+  socket?.emit("leave_room", { roomCode });
+}
+
+// ── Event listeners ────────────────────────────────────────────────────
+
+export function onOpponentJoined(cb: Callback<{ piece: string }>) {
+  connectSocket().on("opponent_joined", cb);
+}
+
+export function offOpponentJoined(cb: Callback<{ piece: string }>) {
+  socket?.off("opponent_joined", cb);
+}
+
+export function onGameStart(cb: Callback<{ piece: "X" | "O"; gameState: SerializedGameState }>) {
+  connectSocket().on("game_start", cb);
+}
+
+export function offGameStart(cb: Callback<{ piece: "X" | "O"; gameState: SerializedGameState }>) {
+  socket?.off("game_start", cb);
+}
+
+export function onMoveMade(
+  cb: Callback<{ move: BoardCoord; gameState: SerializedGameState }>
+) {
+  connectSocket().on("move_made", cb);
+}
+
+export function offMoveMade(cb: Callback<{ move: BoardCoord; gameState: SerializedGameState }>) {
+  socket?.off("move_made", cb);
+}
+
+export function onOpponentLeft(cb: Callback<void>) {
+  connectSocket().on("opponent_left", cb);
+}
+
+export function offOpponentLeft(cb: Callback<void>) {
+  socket?.off("opponent_left", cb);
+}
+
+export function onRematchStart(
+  cb: Callback<{ gameState: SerializedGameState }>
+) {
+  connectSocket().on("rematch_start", cb);
+}
+
+export function offRematchStart(cb: Callback<{ gameState: SerializedGameState }>) {
+  socket?.off("rematch_start", cb);
+}
+
+export function onError(cb: Callback<{ message: string }>) {
+  connectSocket().on("error", cb);
+}
+
+// ── URL helpers (unchanged from localStorage version) ──────────────────
 
 export function getRoomShareLink(roomCode: string): string {
   const baseUrl = window.location.origin + window.location.pathname;

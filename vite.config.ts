@@ -5,6 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { defineConfig, type Plugin, type ViteDevServer } from "vite";
 import { vitePluginManusRuntime } from "vite-plugin-manus-runtime";
+import { setupSocketIO } from "./server/socket-handler.js";
 
 // =============================================================================
 // Manus Debug Collector - Vite Plugin
@@ -203,7 +204,19 @@ function vitePluginStorageProxy(): Plugin {
   };
 }
 
-const plugins = [react(), tailwindcss(), jsxLocPlugin(), vitePluginManusRuntime(), vitePluginManusDebugCollector(), vitePluginStorageProxy()];
+/** Vite plugin: attach Socket.IO to the Vite dev server for online multiplayer */
+function vitePluginSocketIODev(): Plugin {
+  return {
+    name: "socket-io-dev",
+    configureServer(server: ViteDevServer) {
+      if (!server.httpServer) return;
+      setupSocketIO(server.httpServer);
+      console.log("[vite] Socket.IO attached to dev server");
+    },
+  };
+}
+
+const plugins = [react(), tailwindcss(), jsxLocPlugin(), vitePluginManusRuntime(), vitePluginManusDebugCollector(), vitePluginStorageProxy(), vitePluginSocketIODev()];
 
 export default defineConfig({
   plugins,
