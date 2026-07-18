@@ -234,7 +234,9 @@ export default function GameCanvas() {
 
   const handleCreateRoom = useCallback(() => {
     connectSocket();
+    console.log("[online] createRoom: sending create_room");
     createRoom((data) => {
+      console.log("[online] room_created:", data.roomCode);
       setRoomCode(data.roomCode);
       setPlayerPiece("X");
       setOnlineMode("waiting");
@@ -248,8 +250,10 @@ export default function GameCanvas() {
       return;
     }
     connectSocket();
+    console.log("[online] joinRoom: sending join_room for", code);
     joinRoom(code, {
       onSuccess: (data) => {
+        console.log("[online] joinRoom success:", data);
         setRoomCode(code);
         setPlayerPiece(data.piece);
         setOnlineMode("playing");
@@ -258,6 +262,7 @@ export default function GameCanvas() {
         syncState(deserializeState(data.gameState));
       },
       onError: (err) => {
+        console.error("[online] joinRoom error:", err.message);
         setWinMessage(err.message);
       },
     });
@@ -316,6 +321,7 @@ export default function GameCanvas() {
     if (gameMode !== "online") return;
 
     const onStart = (data: { piece: "X" | "O"; gameState: SerializedGameState }) => {
+      console.log("[online] game_start received:", data.piece, "moves:", data.gameState.moveHistory.length);
       setPlayerPiece(data.piece);
       setOnlineMode("playing");
       setShowMenu(false);

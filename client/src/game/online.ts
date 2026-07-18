@@ -30,10 +30,14 @@ export function getSocket(): Socket | null {
 }
 
 export function connectSocket(): Socket {
+  // If already connected, reuse the existing socket
   if (socket?.connected) return socket;
 
-  // In dev mode, Vite runs on :3000 and the Vite plugin attaches Socket.IO there.
-  // In production, the Express server serves everything on the same port.
+  // If a socket exists (connecting or disconnected), reuse it —
+  // Socket.IO handles reconnection internally. Creating a new socket
+  // while an old one exists causes duplicate connections to the server.
+  if (socket) return socket;
+
   const url = window.location.origin;
 
   socket = io(url, {
