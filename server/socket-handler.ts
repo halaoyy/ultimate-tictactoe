@@ -172,16 +172,17 @@ export function setupSocketIO(httpServer: HttpServer): Server {
 
       // Notify host that opponent joined
       if (room.players.X) {
-        io.to(room.players.X).emit("opponent_joined", { piece: "O" });
+        io.to(room.players.X).emit("opponent_joined");
       }
 
-      // Start game for both players
-      io.to(code).emit("game_start", {
+      // Send game_start individually with correct piece for each player
+      // Joiner (O) gets the state directly
+      socket.emit("game_start", {
         piece: "O",
         gameState: serializeState(room.gameState),
       });
 
-      // Also send to host with their piece
+      // Host (X) gets the state with their own piece
       if (room.players.X) {
         io.to(room.players.X).emit("game_start", {
           piece: "X",
@@ -230,7 +231,7 @@ export function setupSocketIO(httpServer: HttpServer): Server {
         room.gameState = makeMove(room.gameState, data.move);
 
         console.log(
-          `[move] ${piece} → (${data.move.outerRow},${data.move.outerCol})[${data.move.innerRow},${data.move.innerCol}] in ${room.code}`
+          `[move] ${piece} → (${data.move.outerRow},${data.move.outerCol})[${data.move.innerRow},${data.move.innerCol}] in ${room.code} — broadcasting to ${Array.from(io.sockets.adapter.rooms.get(room.code) || []).length} clients`
         );
 
         // Broadcast to both players
@@ -238,6 +239,7 @@ export function setupSocketIO(httpServer: HttpServer): Server {
           move: data.move,
           gameState: serializeState(room.gameState),
         });
+        console.log(`[move] broadcast complete, moveHistory.length=${room.gameState.moveHistory.length}`);
       }
     );
 

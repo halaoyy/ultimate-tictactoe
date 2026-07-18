@@ -143,6 +143,7 @@ export default function GameCanvas() {
 
       // In online mode: apply locally + send to server
       if (gameMode === "online" && roomCode) {
+        console.log("[online] sending move:", coord, "as", state.currentPlayer);
         syncState(newState);
         sendMove(roomCode, coord);
         // Win/draw messages are set by the server's move_made broadcast
@@ -334,13 +335,20 @@ export default function GameCanvas() {
       const local = stateRef.current;
       const remoteState = deserializeState(data.gameState);
 
+      console.log("[online] move_made received:", {
+        myPiece: playerPiece,
+        localMoves: local.moveHistory.length,
+        remoteMoves: remoteState.moveHistory.length,
+        remoteCurrentPlayer: remoteState.currentPlayer,
+        remoteMove: data.move,
+      });
+
       // Only apply if the move is new (not our own move reflected back)
       if (remoteState.moveHistory.length > local.moveHistory.length) {
+        console.log("[online] applying opponent move");
         const renderer = rendererRef.current;
-        // The last move is the opponent's new move
         const lastMove = remoteState.lastMove;
         if (lastMove && renderer) {
-          // Determine opponent's piece for animation
           const opponentPiece: Player = playerPiece === "X" ? "O" : "X";
           renderer.animatePiece(lastMove.outerRow, lastMove.outerCol, lastMove.innerRow, lastMove.innerCol, opponentPiece);
         }
@@ -357,6 +365,8 @@ export default function GameCanvas() {
         } else if (remoteState.isDraw) {
           setWinMessage(t("game.draw", language));
         }
+      } else {
+        console.log("[online] skipping own move echo");
       }
     };
 
