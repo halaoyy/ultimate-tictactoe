@@ -25,17 +25,34 @@ type Callback<T = void> = T extends void ? () => void : (data: T) => void;
 
 let socket: Socket | null = null;
 
+// Persist room info for reconnection
+const RECONNECT_KEY = "utt_reconnect";
+
+export function saveReconnectInfo(roomCode: string, piece: string) {
+  try { localStorage.setItem(RECONNECT_KEY, JSON.stringify({ roomCode, piece, ts: Date.now() })); } catch {}
+}
+
+function loadReconnectInfo(): { roomCode: string; piece: string } | null {
+  try {
+    const raw = localStorage.getItem(RECONNECT_KEY);
+    if (!raw) return null;
+    const data = JSON.parse(raw);
+    // Expire after 5 minutes
+    if (Date.now() - data.ts > 5 * 60 * 1000) { localStorage.removeItem(RECONNECT_KEY); return null; }
+    return { roomCode: data.roomCode, piece: data.piece };
+  } catch { return null; }
+}
+
+export function clearReconnectInfo() {
+  try { localStorage.removeItem(RECONNECT_KEY); } catch {}
+}
+
 export function getSocket(): Socket | null {
   return socket;
 }
 
 export function connectSocket(): Socket {
-  // If already connected, reuse the existing socket
   if (socket?.connected) return socket;
-
-  // If a socket exists (connecting or disconnected), reuse it —
-  // Socket.IO handles reconnection internally. Creating a new socket
-  // while an old one exists causes duplicate connections to the server.
   if (socket) return socket;
 
   const url = window.location.origin;
@@ -43,13 +60,19 @@ export function connectSocket(): Socket {
   socket = io(url, {
     transports: ["websocket", "polling"],
     reconnection: true,
-    reconnectionAttempts: 10,
+    reconnectionAttempts: 20,
     reconnectionDelay: 1000,
     reconnectionDelayMax: 5000,
   });
 
   socket.on("connect", () => {
     console.log("[online] connected:", socket?.id);
+    // Auto-rejoin room after reconnect
+    const info = loadReconnectInfo();
+    if (info) {
+      console.log("[online] auto-rejoining room:", info.roomCode, "as", info.piece);
+      socket?.emit("join_room", { roomCode: info.roomCode });
+    }
   });
 
   socket.on("disconnect", (reason) => {
@@ -132,6 +155,22 @@ export function onOpponentLeft(cb: Callback<void>) {
 
 export function offOpponentLeft(cb: Callback<void>) {
   socket?.off("opponent_left", cb);
+}
+
+export function onOpponentReconnecting(cb: Callback<void>) {
+  connectSocket().on("opponent_reconnecting", cb);
+}
+
+export function offOpponentReconnecting(cb: Callback<void>) {
+  socket?.off("opponent_reconnecting", cb);
+}
+
+export function onOpponentReconnected(cb: Callback<void>) {
+  connectSocket().on("opponent_reconnected", cb);
+}
+
+export function offOpponentReconnected(cb: Callback<void>) {
+  socket?.off("opponent_reconnected", cb);
 }
 
 export function onRematchStart(

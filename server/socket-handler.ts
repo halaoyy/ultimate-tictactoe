@@ -22,6 +22,10 @@ interface Room {
   };
   gameState: GameState;
   createdAt: number;
+  disconnectTimers: {
+    X: ReturnType<typeof setTimeout> | null;
+    O: ReturnType<typeof setTimeout> | null;
+  };
 }
 
 type RoomCode = string;
@@ -118,6 +122,7 @@ export function setupSocketIO(httpServer: HttpServer): Server {
         players: { X: socket.id, O: null },
         gameState,
         createdAt: Date.now(),
+        disconnectTimers: { X: null, O: null },
       };
 
       rooms.set(code, room);
@@ -147,20 +152,37 @@ export function setupSocketIO(httpServer: HttpServer): Server {
         return;
       }
 
-      // Check if room is full
+      // Check if room is full — allow reconnection
       if (room.players.O) {
-        // Check if this is the same player reconnecting
-        if (room.players.X === socket.id || room.players.O === socket.id) {
-          // Reconnection — rejoin the room
+        // Check if this is someone trying to reconnect (either X or O dropped)
+        const xConnected = room.players.X ? io.sockets.sockets.get(room.players.X) : null;
+        const oConnected = room.players.O ? io.sockets.sockets.get(room.players.O) : null;
+
+        // If O's socket dropped, let a new socket reclaim the O slot
+        if (!oConnected && room.players.X !== socket.id) {
+          // Reconnect as O
           socketToRoom.set(socket.id, code);
           socket.join(code);
-          const piece = room.players.X === socket.id ? "X" : "O";
-          socket.emit("game_start", {
-            piece,
-            gameState: serializeState(room.gameState),
-          });
+          room.players.O = socket.id;
+          if (room.disconnectTimers.O) { clearTimeout(room.disconnectTimers.O); room.disconnectTimers.O = null; }
+          io.to(code).emit("opponent_reconnected");
+          socket.emit("game_start", { piece: "O", gameState: serializeState(room.gameState) });
+          console.log(`[room] ${socket.id} reconnected as O in ${code}`);
           return;
         }
+
+        // If X's socket dropped, let a new socket reclaim the X slot
+        if (!xConnected && room.players.O !== socket.id) {
+          socketToRoom.set(socket.id, code);
+          socket.join(code);
+          room.players.X = socket.id;
+          if (room.disconnectTimers.X) { clearTimeout(room.disconnectTimers.X); room.disconnectTimers.X = null; }
+          io.to(code).emit("opponent_reconnected");
+          socket.emit("game_start", { piece: "X", gameState: serializeState(room.gameState) });
+          console.log(`[room] ${socket.id} reconnected as X in ${code}`);
+          return;
+        }
+
         socket.emit("error", { message: "Room is full" });
         return;
       }
@@ -278,23 +300,36 @@ export function setupSocketIO(httpServer: HttpServer): Server {
     });
 
     // ── DISCONNECT ─────────────────────────────────────────────
-    socket.on("disconnect", () => {
-      console.log(`[socket] disconnected: ${socket.id}`);
+    socket.on("disconnect", (reason) => {
+      console.log(`[socket] disconnected: ${socket.id} (${reason})`);
       const code = socketToRoom.get(socket.id);
-      if (code) {
-        socketToRoom.delete(socket.id);
-        const room = rooms.get(code);
-        if (room) {
-          // Notify the remaining player
-          socket.to(code).emit("opponent_left");
-          // Clean up the room
-          io.in(code).socketsLeave(code);
-          rooms.delete(code);
-          // Clean remaining socket→room mapping
-          const otherPlayer = room.players.X === socket.id ? room.players.O : room.players.X;
-          if (otherPlayer) socketToRoom.delete(otherPlayer);
-        }
+      if (!code) return;
+
+      const room = rooms.get(code);
+      if (!room) return;
+
+      const piece = room.players.X === socket.id ? "X" : room.players.O === socket.id ? "O" : null;
+      if (!piece) return;
+
+      // Notify the remaining player that opponent is reconnecting
+      socket.to(code).emit("opponent_reconnecting");
+
+      // Clear any existing timer for this piece
+      if (room.disconnectTimers[piece]) {
+        clearTimeout(room.disconnectTimers[piece]);
       }
+
+      // 15-second grace period before cleaning up
+      room.disconnectTimers[piece] = setTimeout(() => {
+        console.log(`[room] cleanup ${code} — ${piece} did not reconnect`);
+        socket.to(code).emit("opponent_left");
+        io.in(code).socketsLeave(code);
+        rooms.delete(code);
+        // Clean socket→room mappings
+        Array.from(socketToRoom.entries()).forEach(([sid, rid]) => {
+          if (rid === code) socketToRoom.delete(sid);
+        });
+      }, 15000);
     });
   });
 

@@ -175,3 +175,9 @@
     }
   }
 }
+/* Prevent mobile address bar from causing layout shift */
+html, body, #root {
+  height: 100dvh;
+  overflow: hidden;
+  overscroll-behavior: none;
+}

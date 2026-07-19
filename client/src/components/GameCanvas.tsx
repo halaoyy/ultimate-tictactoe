@@ -23,15 +23,21 @@ import {
   sendMove,
   requestRematch,
   leaveRoom,
+  clearReconnectInfo,
+  saveReconnectInfo,
   onOpponentJoined,
   onGameStart,
   onMoveMade,
   onOpponentLeft,
+  onOpponentReconnecting,
+  onOpponentReconnected,
   onRematchStart,
   offOpponentJoined,
   offGameStart,
   offMoveMade,
   offOpponentLeft,
+  offOpponentReconnecting,
+  offOpponentReconnected,
   offRematchStart,
   getRoomShareLink,
   getRoomCodeFromUrl,
@@ -63,6 +69,7 @@ export default function GameCanvas() {
   const [roomCode, setRoomCode] = useState<string>("");
   const [roomCodeInput, setRoomCodeInput] = useState<string>("");
   const [playerPiece, setPlayerPiece] = useState<Player>("X");
+  const [reconnectStatus, setReconnectStatus] = useState<string | null>(null);
 
   // Reconstruct GameState from serialized data received from server
   const deserializeState = (data: SerializedGameState): GameState => ({
@@ -103,6 +110,7 @@ export default function GameCanvas() {
         setOnlineMode("playing");
         setShowMenu(false);
         setWinMessage(null);
+        saveReconnectInfo(urlRoomCode, data.piece);
         syncState(deserializeState(data.gameState));
       },
       onError: (err) => {
@@ -133,13 +141,22 @@ export default function GameCanvas() {
     };
     rafRef.current = requestAnimationFrame(loop);
 
-    const onResize = () => renderer.resize();
+    // Debounced resize to prevent mobile address bar jitter
+    let resizeTimer: ReturnType<typeof setTimeout>;
+    const onResize = () => {
+      clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(() => renderer.resize(), 150);
+    };
     window.addEventListener("resize", onResize);
+    // Also handle orientation change on mobile
+    window.addEventListener("orientationchange", onResize);
 
     return () => {
       running = false;
       cancelAnimationFrame(rafRef.current);
       window.removeEventListener("resize", onResize);
+      window.removeEventListener("orientationchange", onResize);
+      clearTimeout(resizeTimer);
       startedRef.current = false;
     };
   }, []);
@@ -270,6 +287,7 @@ export default function GameCanvas() {
       setRoomCode(data.roomCode);
       setPlayerPiece("X");
       setOnlineMode("waiting");
+      saveReconnectInfo(data.roomCode, "X");
     });
   }, []);
 
@@ -289,6 +307,7 @@ export default function GameCanvas() {
         setOnlineMode("playing");
         setShowMenu(false);
         setWinMessage(null);
+        saveReconnectInfo(code, data.piece);
         syncState(deserializeState(data.gameState));
       },
       onError: (err) => {
@@ -325,7 +344,8 @@ export default function GameCanvas() {
     setOnlineMode("menu");
     setRoomCode("");
     setRoomCodeInput("");
-    // Disconnect from online server
+    // Disconnect from online server and clear reconnect info
+    clearReconnectInfo();
     disconnectSocket();
     syncState(createInitialState());
   }, [syncState]);
@@ -410,18 +430,32 @@ export default function GameCanvas() {
     return () => { offMoveMade(onMove); };
   }, [gameMode, onlineMode, language, playerPiece]);
 
-  // Listen for opponent disconnect
+  // Listen for opponent disconnect and reconnection
   useEffect(() => {
     if (gameMode !== "online") return;
 
     const onLeft = () => {
-      setWinMessage(t("online.roomNotFound", language) || "Opponent left");
+      clearReconnectInfo();
+      setReconnectStatus(null);
+      setWinMessage("Opponent left");
       setOnlineMode("menu");
+    };
+    const onReconnecting = () => {
+      setReconnectStatus("Opponent reconnecting...");
+    };
+    const onReconnected = () => {
+      setReconnectStatus(null);
     };
 
     onOpponentLeft(onLeft);
-    return () => { offOpponentLeft(onLeft); };
-  }, [gameMode, language]);
+    onOpponentReconnecting(onReconnecting);
+    onOpponentReconnected(onReconnected);
+    return () => {
+      offOpponentLeft(onLeft);
+      offOpponentReconnecting(onReconnecting);
+      offOpponentReconnected(onReconnected);
+    };
+  }, [gameMode]);
 
   // Listen for rematch
   useEffect(() => {
@@ -482,7 +516,18 @@ export default function GameCanvas() {
 
             {/* Center status */}
             <div className="flex flex-col items-center" style={{ minWidth: 140 }}>
-              {gameActive ? (
+              {reconnectStatus ? (
+                <div style={{
+                  color: "#fbbf24",
+                  fontSize: 11,
+                  fontWeight: 700,
+                  letterSpacing: "0.1em",
+                  textShadow: "0 0 10px #fbbf24",
+                  animation: "pulse 1.5s ease-in-out infinite",
+                }}>
+                  {reconnectStatus}
+                </div>
+              ) : gameActive ? (
                 <>
                   <div style={{ color: "rgba(255,255,255,0.35)", fontSize: 9, letterSpacing: "0.2em", textTransform: "uppercase", marginBottom: 2 }}>
                     {t("game.turn", language)}
